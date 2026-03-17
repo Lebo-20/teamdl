@@ -2,9 +2,12 @@ import os
 import json
 import asyncio
 import html
+import sys
+import subprocess
 import telegram # type: ignore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto # type: ignore
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes # type: ignore
+import config as config_file
 from config import BOT_TOKEN, TEMP_DIR, ALLOWED_USERS, TELEGRAM_MAX_SIZE, TIMEOUT_DL # type: ignore
 import parsers # type: ignore
 import downloader # type: ignore
@@ -109,6 +112,29 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if os.path.exists(file_path):
             os.remove(file_path)
 
+async def cleanup_all_temp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Membersihkan seluruh folder TEMP_DIR."""
+    user_id = update.effective_user.id # type: ignore
+    owner_id = getattr(config_file, 'OWNER_ID', 0)
+    
+    if owner_id != 0 and user_id != owner_id:
+        await update.message.reply_text("❌ Fitur ini hanya untuk Owner.") # type: ignore
+        return
+
+    import shutil
+    try:
+        if os.path.exists(TEMP_DIR):
+            shutil.rmtree(TEMP_DIR)
+            os.makedirs(TEMP_DIR, exist_ok=True)
+            await update.message.reply_text("✅ Seluruh folder temp dan session telah dibersihkan.") # type: ignore
+        else:
+            await update.message.reply_text("ℹ️ Folder temp sudah kosong.") # type: ignore
+        
+        # Bersihkan juga session di memory
+        user_sessions.clear()
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal membersihkan temp: {str(e)}") # type: ignore
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -118,7 +144,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("cancel_"):
         await query.edit_message_caption("❌ Proses dibatalkan.") if query.message.caption else await query.edit_message_text("❌ Proses dibatalkan.")
         session_id = data.split("cancel_")[1]
-        user_sessions.pop(session_id, None)
+        session = user_sessions.pop(session_id, None)
+        if session:
+            try:
+                import shutil
+                s_dir = session.get('session_dir')
+                if s_dir and os.path.exists(s_dir):
+                    shutil.rmtree(s_dir)
+            except Exception:
+                pass
         return
         
     elif data.startswith("dl_"):
@@ -469,6 +503,53 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
+async def update_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Update bot dari GitHub dan restart."""
+    user_id = update.effective_user.id # type: ignore
+    owner_id = getattr(config_file, 'OWNER_ID', 0)
+    
+    if owner_id != 0 and user_id != owner_id:
+        await update.message.reply_text("❌ Fitur ini hanya untuk Owner.") # type: ignore
+        return
+
+    msg = await update.message.reply_text("🔄 Memulai update dari GitHub...") # type: ignore
+    
+    try:
+        # Jalankan git pull
+        process = await asyncio.create_subprocess_exec(
+            "git", "pull",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+        
+        result_out = stdout.decode().strip()
+        result_err = stderr.decode().strip()
+        
+        if "Already up to date." in result_out:
+            await msg.edit_text("✅ Bot sudah berada di versi terbaru.")
+            return
+            
+        await msg.edit_text(f"✅ Update berhasil!\n\n<b>Log:</b>\n<code>{html.escape(result_out)}</code>\n\n🔄 Restarting...", parse_mode='HTML')
+        
+        # Restart process
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+        
+    except Exception as e:
+        await msg.edit_text(f"❌ Gagal update: {str(e)}")
+
+async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Restart bot secara manual."""
+    user_id = update.effective_user.id # type: ignore
+    owner_id = getattr(config_file, 'OWNER_ID', 0)
+    
+    if owner_id != 0 and user_id != owner_id:
+        await update.message.reply_text("❌ Fitur ini hanya untuk Owner.") # type: ignore
+        return
+
+    await update.message.reply_text("🔄 Restarting...") # type: ignore
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
 def main():
     if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
         print("Silakan edit config.py dan isi BOT_TOKEN!")
@@ -477,6 +558,9 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).build()
     
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("update", update_bot))
+    app.add_handler(CommandHandler("restart", restart_bot))
+    app.add_handler(CommandHandler("cleartmp", cleanup_all_temp))
     app.add_handler(MessageHandler(filters.Document.FileExtension("json"), handle_document))
     app.add_handler(CallbackQueryHandler(handle_callback))
     
