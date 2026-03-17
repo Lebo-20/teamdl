@@ -1,0 +1,5 @@
+python-telegram-bot>=20.0
+requests
+yt-dlp
+aiohttp
+aiofiles
