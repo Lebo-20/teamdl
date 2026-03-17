@@ -45,6 +45,46 @@ async def download_file(url: str, output_path: str, headers: Optional[Dict[str, 
         print(f"Error download {url}: {e}")
         return False
 
+async def download_aria2(url: str, output_path: str, headers: Optional[Dict[str, str]] = None) -> bool:
+    """Download file menggunakan aria2c untuk kecepatan maksimal."""
+    # Deteksi referer otomatis
+    referer = "https://www.google.com/"
+    if "mydramawave.com" in url: referer = "https://www.mydramawave.com/"
+    elif "vividshort.com" in url: referer = "https://vividshort.com/"
+    elif "farsunpteltd.com" in url: referer = "https://pages.farsunpteltd.com/"
+    
+    dir_name = os.path.dirname(output_path)
+    file_name = os.path.basename(output_path)
+
+    cmd = [
+        "aria2c", 
+        "--console-log-level=warn",
+        "-x", "16", 
+        "-s", "16", 
+        "-k", "1M",
+        "--dir", dir_name,
+        "--out", file_name,
+        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "--referer", referer,
+        url
+    ]
+
+    if headers:
+        for k, v in headers.items():
+            cmd.extend(["--header", f"{k}: {v}"])
+            
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        await process.communicate()
+        return process.returncode == 0
+    except Exception as e:
+        print(f"Aria2 error: {e}")
+        return False
+
 async def download_video_ffmpeg(m3u8_url: str, output_path: str, headers: dict | None = None) -> bool:
     """Download video dari m3u8 menggunakan ffmpeg (Async)."""
     # Deteksi referer otomatis
@@ -110,7 +150,7 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         for k, v in headers.items():
             cmd.extend(["--add-header", f"{k}: {v}"])
         
-    cmd.extend(["-o", "C:/tmp/drama_bot/%(title)s.%(ext)s", url])
+    cmd.extend(["-o", output_path, url])
     
     try:
         process = await asyncio.create_subprocess_exec(*cmd)

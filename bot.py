@@ -8,7 +8,7 @@ import telegram # type: ignore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto # type: ignore
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes # type: ignore
 import config as config_file
-from config import BOT_TOKEN, TEMP_DIR, ALLOWED_USERS, TELEGRAM_MAX_SIZE, TIMEOUT_DL # type: ignore
+from config import BOT_TOKEN, TEMP_DIR, ALLOWED_USERS, TELEGRAM_MAX_SIZE, TIMEOUT_DL, MAX_CONCURRENT_DOWNLOADS, WORKERS # type: ignore
 import parsers # type: ignore
 import downloader # type: ignore
 from typing import Any
@@ -187,138 +187,120 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         failed_count = 0
         failed_eps = []
         
-        # Mulai loop download per episode
+        # Mulai download paralel per episode
         episodes_list: Any = drama_info.get('episodes', []) # type: ignore
-        for idx, ep in enumerate(episodes_list): # type: ignore
+        semaphore = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+        
+        async def download_task(idx, ep):
+            nonlocal success_count, failed_count
             current_num = idx + 1
-            ep_num = ep.get('num', current_num) # type: ignore
-            
-            # Format status text untuk episode ini
-            status_msg = f"Mendownload..."
-            progress_bar = make_progress_bar(current_num, total)
-            
-            status_text = (
-                f"⬇️ <b>PROSES DOWNLOAD</b>\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"📦 <b>Drama:</b> {html.escape(title)}\n"
-                f"📺 <b>Total:</b> {total} episode\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"⏳ <b>Episode {current_num}/{total}</b> — {html.escape(status_msg)}\n"
-                f"{progress_bar}\n"
-                f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"✅ Selesai : {success_count}\n"
-                f"❌ Gagal   : {failed_count}\n"
-            )
-            
-            try:
-                if query.message.caption:
-                    await query.edit_message_caption(status_text, parse_mode='HTML')
-                else:
-                    await query.edit_message_text(status_text, parse_mode='HTML')
-            except Exception as e:
-                # Ignore edit errors (misal: message not modified karena text sama)
-                pass
-
+            ep_num = ep.get('num', current_num)
             url = ep.get('url')
-            source = session['source'] # type: ignore
+            source = session['source']
             
-            # Cek status expired atau locked khusus FlikReels
-            if source == "flikreels":
-                import time
-                timeout = ep.get("hls_timeout", 0) # type: ignore
-                if timeout > 0 and time.time() > timeout:
+            async with semaphore:
+                # Cek expired (FlikReels)
+                if source == "flikreels":
+                    import time
+                    timeout = ep.get("hls_timeout", 0)
+                    if timeout > 0 and time.time() > timeout:
+                        failed_count += 1
+                        failed_eps.append(f"EP{ep_num} (Exp)")
+                        return
+                    if ep.get("is_lock") == 1 and not url:
+                        failed_count += 1
+                        failed_eps.append(f"EP{ep_num} (Lock)")
+                        return
+
+                if not url:
                     failed_count += 1
-                    failed_eps.append(f"EP{ep_num} (Expired)")
-                    session['failed'].append(ep) # type: ignore
-                    continue
-                if ep.get("is_lock") == 1 and not url: # type: ignore
-                    failed_count += 1
-                    failed_eps.append(f"EP{ep_num} (Terkunci/Perlu token)")
-                    session['failed'].append(ep) # type: ignore
-                    continue
-                    
-            if not url:
-                failed_count += 1
-                failed_eps.append(f"EP{ep_num} (No URL)")
-                session['failed'].append(ep) # type: ignore
-                continue
+                    failed_eps.append(f"EP{ep_num} (NoUrl)")
+                    return
+
+                safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
+                ep_filename = f"{safe_title} - EP{ep_num:02d}.mp4"
+                output_path = os.path.join(session['session_dir'], ep_filename)
                 
-            # Tentukan tipe download berdasarkan platform/URL
-            safe_title = "".join([c for c in title if c.isalpha() or c.isdigit() or c==' ']).rstrip()
-            ep_filename = f"{safe_title} - EP{ep_num:02d}.mp4"
-            output_path = os.path.join(session['session_dir'], ep_filename) # type: ignore
-            
-            success = False
-            
-            # Download logika
-            if source == "vigloo":
-                # Butuh yt-dlp dengan cookies
-                cookies = ep.get('cookies', {}) # type: ignore
-                headers = {}
-                if cookies:
-                    cookie_str = "; ".join([f"{k}={v}" for k, v in cookies.items()])
-                    headers["Cookie"] = cookie_str
-                success = await downloader.download_video_ytdlp(url, output_path, headers) # type: ignore
-            elif source in ["flikreels", "dramaflickreels"]:
-                success = await downloader.download_video_ytdlp(url, output_path) # type: ignore
-                if not success:
-                    success = await downloader.download_file(url, output_path) # type: ignore
-            elif ".m3u8" in url or source in ["dramawave_info", "dramawave_direct", "freereels", "goodshort", "meloshort", "stardust"]: # type: ignore
-                success = await downloader.download_video_ytdlp(url, output_path) # type: ignore
-                if not success:
-                    success = await downloader.download_video_ffmpeg(url, output_path) # type: ignore
-            else:
-                # File MP4 biasa (draamabox, poincinta, dotdrama)
-                if source in ["draamabox", "draamabox_list"]:
-                     # Seringkali memblokir request aiohttp sederhana, gunakan yt-dlp duluan
-                     success = await downloader.download_video_ytdlp(url, output_path) # type: ignore
-                     if not success:
-                         success = await downloader.download_file(url, output_path) # type: ignore
+                success = False
+                # Download logika
+                if source == "vigloo":
+                    cookies = ep.get('cookies', {})
+                    headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in cookies.items()])} if cookies else {}
+                    success = await downloader.download_video_ytdlp(url, output_path, headers)
+                elif source in ["flikreels", "dramaflickreels"]:
+                    success = await downloader.download_video_ytdlp(url, output_path)
+                    if not success: success = await downloader.download_aria2(url, output_path)
+                elif ".m3u8" in url or source in ["dramawave_info", "dramawave_direct", "freereels", "goodshort", "meloshort", "stardust"]:
+                    success = await downloader.download_video_ytdlp(url, output_path)
+                    if not success: success = await downloader.download_video_ffmpeg(url, output_path)
                 else:
-                    success = await downloader.download_file(url, output_path) # type: ignore
+                    if source in ["draamabox", "draamabox_list"]:
+                        success = await downloader.download_video_ytdlp(url, output_path)
+                        if not success: success = await downloader.download_aria2(url, output_path)
+                    else:
+                        success = await downloader.download_aria2(url, output_path)
                 
-            # Proses Subtitle jika ada
-            sub_url = ep.get('subtitle') # type: ignore
-            if success and sub_url:
-                sub_path = os.path.join(session['session_dir'], f"temp_sub_{ep_num}.srt") # type: ignore
-                sub_success = await downloader.download_file(sub_url, sub_path) # type: ignore
-                if sub_success:
-                    new_output = await downloader.mux_subtitle(output_path, sub_path, "mp4") # type: ignore
-                    if new_output:
-                        # Hapus raw video dan subtitle, pakai yang subbed
-                        if os.path.exists(output_path): os.remove(output_path)
-                        if os.path.exists(sub_path): os.remove(sub_path)
-                        output_path = new_output
-            
-            if success:
-                success_count += 1
-                session['downloaded'].append(output_path) # type: ignore
-            else:
-                failed_count += 1
-                failed_eps.append(f"EP{ep_num}")
-                session['failed'].append(ep) # type: ignore
-                
-            # Beri jeda kecil antar episode agar tidak spam Telegram API
-            await asyncio.sleep(1)
+                # Subtitle
+                sub_url = ep.get('subtitle')
+                if success and sub_url:
+                    sub_path = os.path.join(session['session_dir'], f"temp_sub_{ep_num}.srt")
+                    if await downloader.download_file(sub_url, sub_path):
+                        new_out = await downloader.mux_subtitle(output_path, sub_path, "mp4")
+                        if new_out:
+                            if os.path.exists(output_path): os.remove(output_path)
+                            if os.path.exists(sub_path): os.remove(sub_path)
+                            output_path = new_out
+
+                if success:
+                    success_count += 1
+                    session['downloaded'].append(output_path)
+                else:
+                    failed_count += 1
+                    failed_eps.append(f"EP{ep_num}")
+
+        # Task untuk update status message
+        async def update_status_loop():
+            while (success_count + failed_count) < total:
+                progress_bar = make_progress_bar(success_count + failed_count, total)
+                status_text = (
+                    f"⬇️ <b>PROSES DOWNLOAD (ARIA2)</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"📦 <b>Drama:</b> {html.escape(title)}\n"
+                    f"📺 <b>Total:</b> {total} episode\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"⏳ <b>Progress:</b> {success_count + failed_count}/{total}\n"
+                    f"{progress_bar}\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"✅ Selesai : {success_count}\n"
+                    f"❌ Gagal   : {failed_count}\n"
+                )
+                try:
+                    if query.message.caption: await query.edit_message_caption(status_text, parse_mode='HTML')
+                    else: await query.edit_message_text(status_text, parse_mode='HTML')
+                except Exception: pass
+                await asyncio.sleep(3)
+
+        # Jalankan task paralel
+        tasks = [download_task(idx, ep) for idx, ep in enumerate(episodes_list)]
+        status_task = asyncio.create_task(update_status_loop())
+        await asyncio.gather(*tasks)
+        status_task.cancel()
 
         # Laporan Hasil Download Selesai
         if failed_eps:
             limit = 15
-            if len(failed_eps) > limit:
-                failed_text = f"\n⚠️ Episode gagal: {', '.join(failed_eps[:limit])} (+{len(failed_eps)-limit} lainnya)" # type: ignore
-            else:
-                failed_text = f"\n⚠️ Episode gagal: {', '.join(failed_eps)}"
+            failed_text = f"\n⚠️ Gagal: {', '.join(failed_eps[:limit])}" + ("..." if len(failed_eps) > limit else "")
         else:
             failed_text = ""
         
         final_text = (
-            f"⬇️ <b>DOWNLOAD SELESAI</b>\n"
+            f"⬇️ <b>DOWNLOAD SELESAI (ARIA2)</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📦 <b>Drama:</b> {html.escape(title)}\n"
             f"📺 <b>Total:</b> {total} episode\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"✅ Berhasil : {success_count} episode\n"
-            f"❌ Gagal    : {failed_count} episode\n"
+            f"✅ Berhasil : {success_count}\n"
+            f"❌ Gagal    : {failed_count}\n"
             f"━━━━━━━━━━━━━━━━━━━━{html.escape(failed_text)}\n"
             f"\nPilih format upload:"
         )
@@ -333,12 +315,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         try:
-            if query.message.caption: # type: ignore
-                await query.edit_message_caption(final_text, reply_markup=reply_markup, parse_mode='HTML') # type: ignore
+            if query.message.caption:
+                await query.edit_message_caption(final_text, reply_markup=reply_markup, parse_mode='HTML')
             else:
-                await query.edit_message_text(final_text, reply_markup=reply_markup, parse_mode='HTML') # type: ignore
-        except Exception as e:
-            print(f"Error edit final text: {e}")
+                await query.edit_message_text(final_text, reply_markup=reply_markup, parse_mode='HTML')
+        except Exception: pass
 
     elif data.startswith("up_"):
         # Format: up_mkv_SESSIONID or up_mp4_SESSIONID
@@ -565,7 +546,7 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_callback))
     
     print("Bot is running...")
-    app.run_polling()
+    app.run_polling(read_timeout=60, write_timeout=60, connect_timeout=60, pool_timeout=60)
 
 if __name__ == '__main__':
     main()
