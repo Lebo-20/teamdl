@@ -7,15 +7,36 @@ import subprocess
 import telegram # type: ignore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup # type: ignore
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes # type: ignore
-import config as config_file
-from config import BOT_TOKEN, ALLOWED_USERS, TELEGRAM_MAX_SIZE, TIMEOUT_DL, MAX_CONCURRENT_DOWNLOADS, WORKERS, HTTP_PROXY # type: ignore
-import parsers # type: ignore
-import downloader # type: ignore
 from typing import Any
 import shutil
 
+# --- CONFIGURATION LOADING ---
+# Mencoba memuat dari config.py, jika gagal gunakan Environment Variables
+try:
+    import config as config_file
+    BOT_TOKEN = getattr(config_file, 'BOT_TOKEN', "")
+    ALLOWED_USERS: list[int] = getattr(config_file, 'ALLOWED_USERS', [])
+    TELEGRAM_MAX_SIZE: int = getattr(config_file, 'TELEGRAM_MAX_SIZE', 2000 * 1024 * 1024)
+    TIMEOUT_DL: int = getattr(config_file, 'TIMEOUT_DL', 600)
+    MAX_CONCURRENT_DOWNLOADS: int = getattr(config_file, 'MAX_CONCURRENT_DOWNLOADS', 3)
+    WORKERS: int = getattr(config_file, 'WORKERS', 10)
+    HTTP_PROXY: str = getattr(config_file, 'HTTP_PROXY', "")
+    TEMP_DIR_CONFIG: str = getattr(config_file, 'TEMP_DIR', "")
+except (ImportError, ModuleNotFoundError):
+    # Fallback ke Environment Variables jika config.py tidak ada
+    BOT_TOKEN = os.getenv("BOT_TOKEN", "")
+    allowed_raw = os.getenv("ALLOWED_USERS", "")
+    ALLOWED_USERS = [int(i) for i in allowed_raw.split(",") if i] if allowed_raw else []
+    TELEGRAM_MAX_SIZE = int(os.getenv("TELEGRAM_MAX_SIZE", 2147483648))
+    TIMEOUT_DL = int(os.getenv("TIMEOUT_DL", 600))
+    MAX_CONCURRENT_DOWNLOADS = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", 3))
+    WORKERS = int(os.getenv("WORKERS", 10))
+    HTTP_PROXY = os.getenv("HTTP_PROXY", "")
+    TEMP_DIR_CONFIG = os.getenv("TEMP_DIR", "")
+    print("⚠️ config.py tidak ditemukan di server, menggunakan Environment Variables (jika ada).")
+
 # Folder penyimpanan project-local
-TEMP_DIR = os.path.join(os.getcwd(), "downloads")
+TEMP_DIR = TEMP_DIR_CONFIG if TEMP_DIR_CONFIG else os.path.join(os.getcwd(), "downloads")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Kamus penyimpanan session per user (sementara di memory)
@@ -30,20 +51,21 @@ def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     return f"[{bar}] {pct}%"
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id # type: ignore
+    if not update.effective_user: return
+    user_id = update.effective_user.id
     if ALLOWED_USERS and user_id not in ALLOWED_USERS:
         await update.message.reply_text("Maaf, Anda tidak diizinkan menggunakan bot ini.") # type: ignore
         return
     await update.message.reply_text("Halo! Kirimkan file JSON drama untuk mulai mendownload.") # type: ignore
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id # type: ignore
-    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
-        return
+    if not update.effective_user or not update.message or not update.message.document: return
+    user_id = update.effective_user.id
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS: return
         
-    doc = update.message.document # type: ignore
-    if not doc.file_name.endswith('.json'):
-        await update.message.reply_text("❌ Mohon kirimkan file berformat JSON.") # type: ignore
+    doc = update.message.document
+    if not doc.file_name or not doc.file_name.endswith('.json'):
+        await update.message.reply_text("❌ Mohon kirimkan file berformat JSON.")
         return
 
     # Download JSON
@@ -56,13 +78,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
             
+        import parsers # type: ignore
         source_type = parsers.detect_source(data)
         if source_type == "unknown":
-            await update.message.reply_text("❌ Format JSON tidak dikenali.") # type: ignore
+            await update.message.reply_text("❌ Format JSON tidak dikenali.")
             return
             
         drama_info = parsers.parse_json_data(data, source_type, doc.file_name)
-        session_id = f"{user_id}_{update.message.message_id}" # type: ignore
+        session_id = f"{user_id}_{update.message.message_id}"
         session_dir = os.path.join(TEMP_DIR, session_id)
         os.makedirs(session_dir, exist_ok=True)
         
@@ -85,18 +108,18 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]]
         
         if drama_info.get('cover'):
-            await update.message.reply_photo(photo=drama_info['cover'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML') # type: ignore
+            await update.message.reply_photo(photo=drama_info['cover'], caption=text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         else:
-            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML') # type: ignore
+            await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error JSON: {str(e)}") # type: ignore
+        await update.message.reply_text(f"❌ Error JSON: {str(e)}")
     finally:
         if os.path.exists(file_path): os.remove(file_path)
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if not query or not query.data: return
+    if not query or not query.data or not query.message: return
     await query.answer()
     
     data = query.data
@@ -107,23 +130,23 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shutil.rmtree(session['session_dir'], ignore_errors=True)
         
         msg = "❌ Proses dibatalkan."
-        if query.message.caption: await query.edit_message_caption(msg) # type: ignore
-        else: await query.edit_message_text(msg) # type: ignore
+        if query.message.caption: await query.edit_message_caption(msg)
+        else: await query.edit_message_text(msg)
         return
         
     elif data.startswith("dl_"):
         session_id = data.split("dl_")[1]
         session = user_sessions.get(session_id)
         if not session:
-            await query.edit_message_text("⚠️ Sesi habis.") # type: ignore
+            await query.edit_message_text("⚠️ Sesi habis.")
             return
             
         drama_info = session['drama_info']
         total = drama_info['total_ep']
         title = drama_info['title']
         
-        # Variabel progress
-        counts = {"success": 0, "failed": 0}
+        # Variabel progress dengan list agar mutable di inner function
+        progress = [0, 0] # [success, failed]
         
         async def download_task(idx, ep, semaphore):
             current_num = idx + 1
@@ -132,10 +155,11 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             async with semaphore:
                 if not url:
-                    counts["failed"] += 1
+                    progress[1] += 1
                     session['failed_list'].append(f"EP{ep_num}(NoURL)")
                     return
 
+                import downloader # type: ignore
                 safe_title = "".join([c for c in title if c.isalnum() or c==' ']).strip()
                 ep_filename = f"{safe_title} - EP{ep_num:02d}.mp4"
                 output_path = os.path.join(session['session_dir'], ep_filename)
@@ -176,25 +200,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     success = False
 
                 if success:
-                    counts["success"] += 1
+                    progress[0] += 1
                     session['downloaded'].append(output_path)
                 else:
-                    counts["failed"] += 1
+                    progress[1] += 1
                     session['failed_list'].append(f"EP{ep_num}")
 
         async def update_status_loop():
-            while (counts["success"] + counts["failed"]) < total:
-                done = counts["success"] + counts["failed"]
+            while (progress[0] + progress[1]) < total:
+                done = progress[0] + progress[1]
                 text = (
                     f"⬇️ <b>PROSES DOWNLOAD</b>\n"
                     f"📦 <b>Drama:</b> {html.escape(title)}\n"
                     f"📺 <b>Progress:</b> {done}/{total}\n"
                     f"{make_progress_bar(done, total)}\n"
-                    f"✅ Selesai: {counts['success']} | ❌ Gagal: {counts['failed']}"
+                    f"✅ Selesai: {progress[0]} | ❌ Gagal: {progress[1]}"
                 )
                 try:
                     if query.message.caption: await query.edit_message_caption(text, parse_mode='HTML') # type: ignore
-                    else: await query.edit_message_text(text, parse_mode='HTML') # type: ignore
+                    else: await query.edit_message_text(text, parse_mode='HTML')
                 except Exception: pass
                 await asyncio.sleep(4)
 
@@ -209,7 +233,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         final_text = (
             f"⬇️ <b>DOWNLOAD SELESAI</b>\n"
             f"📦 <b>Drama:</b> {html.escape(title)}\n"
-            f"✅ Berhasil: {counts['success']} | ❌ Gagal: {counts['failed']}{html.escape(failed_text)}\n"
+            f"✅ Berhasil: {progress[0]} | ❌ Gagal: {progress[1]}{html.escape(failed_text)}\n"
             f"\nPilih format upload:"
         )
 
@@ -219,8 +243,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ], [InlineKeyboardButton("❌ Batal Upload", callback_data=f"cancel_{session_id}")]]
         
         try:
-            if query.message.caption: await query.edit_message_caption(final_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML') # type: ignore
-            else: await query.edit_message_text(final_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML') # type: ignore
+            if query.message.caption: await query.edit_message_caption(final_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
+            else: await query.edit_message_text(final_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='HTML')
         except Exception: pass
 
     elif data.startswith("up_"):
@@ -240,7 +264,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for idx, filepath in enumerate(files):
             current = idx + 1
-            filename = os.path.basename(filepath)
             
             # Progress update
             text = (
@@ -251,8 +274,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ Berhasil: {uploaded} | ❌ Gagal: {failed_up}"
             )
             try:
-                if query.message.caption: await query.edit_message_caption(text, parse_mode='HTML') # type: ignore
-                else: await query.edit_message_text(text, parse_mode='HTML') # type: ignore
+                if query.message.caption: await query.edit_message_caption(text, parse_mode='HTML')
+                else: await query.edit_message_text(text, parse_mode='HTML')
             except Exception: pass
 
             upload_path = filepath
@@ -290,19 +313,36 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await asyncio.sleep(1)
 
         # Final Report
-        report = f"✅ <b>UPLOAD SELESAI!</b>\n📦 {html.escape(title)}\n✅ Berhasil: {uploaded}\n❌ Gagal: {failed_up}"
+        drama_info = session.get('drama_info', {})
+        synopsis = drama_info.get('sinopsis', 'Tidak ada sinopsis.')
+        syn_short = synopsis[:500] + ('...' if len(synopsis) > 500 else '')
+        
+        report = (
+            f"✅ <b>PROSES SELESAI!</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"📦 <b>Drama:</b> {html.escape(title)}\n"
+            f"📺 <b>Format:</b> {html.escape(target_format.upper())}\n"
+            f"📖 <b>Sinopsis:</b>\n<i>{html.escape(syn_short)}</i>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"⬆️ Total File    : {len(files)}\n"
+            f"✅ Berhasil      : {uploaded}\n"
+            f"❌ Gagal Upload  : {failed_up}\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🎉 Semua proses telah selesai!"
+        )
         try:
-            if query.message.caption: await query.edit_message_caption(report, parse_mode='HTML') # type: ignore
-            else: await query.edit_message_text(report, parse_mode='HTML') # type: ignore
+            if query.message and query.message.caption: await query.edit_message_caption(report, parse_mode='HTML')
+            else: await query.edit_message_text(report, parse_mode='HTML')
         except Exception: pass
         
         user_sessions.pop(session_id, None)
         shutil.rmtree(session['session_dir'], ignore_errors=True)
 
 async def update_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id # type: ignore
-    if user_id != getattr(config_file, 'OWNER_ID', 0): return
-    msg = await update.message.reply_text("🔄 Updating...") # type: ignore
+    if not update.effective_user or not update.message: return
+    user_id = update.effective_user.id
+    if user_id != getattr(config_file if 'config_file' in globals() else None, 'OWNER_ID', 0): return
+    msg = await update.message.reply_text("🔄 Updating...")
     try:
         subprocess.run(["git", "pull"], check=True)
         await msg.edit_text("✅ Updated! Restarting...")
@@ -310,14 +350,17 @@ async def update_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e: await msg.edit_text(f"❌ Failed: {e}")
 
 async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != getattr(config_file, 'OWNER_ID', 0): return # type: ignore
-    await update.message.reply_text("🔄 Restarting...") # type: ignore
+    if not update.effective_user or not update.message: return
+    if update.effective_user.id != getattr(config_file if 'config_file' in globals() else None, 'OWNER_ID', 0): return
+    await update.message.reply_text("🔄 Restarting...")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 from telegram.request import HTTPXRequest
 
 def main():
-    if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE": return
+    if not BOT_TOKEN:
+        print("❌ BOT_TOKEN tidak ditemukan! Isi di config.py atau Environment Variable.")
+        return
     
     # Request setup for stability
     t_request = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30)
@@ -335,7 +378,6 @@ def main():
     
     for attempt in range(5):
         try:
-            # drop_pending_updates=True untuk mengatasi Conflict jika instance sebelumnya masih aktif sebentar
             app.run_polling(drop_pending_updates=True)
             break
         except Exception as e:
