@@ -198,8 +198,8 @@ def parse_flikreels(data: Any) -> dict:
         })
         
     return {
-        "title": info.get("title", "Unknown"), # type: ignore
-        "sinopsis": "",
+        "title": info.get("title") or info.get("name") or "Unknown", # type: ignore
+        "sinopsis": info.get("summary") or info.get("description") or info.get("intro") or "", # type: ignore
         "cover": info.get("cover", ""), # type: ignore
         "total_ep": len(episodes_raw), # type: ignore
         "episodes": sorted(episodes, key=lambda x: x["num"])
@@ -279,22 +279,22 @@ def parse_meloshort(data: dict) -> dict:
 
 def parse_vigloo(data: dict, filename: str) -> dict:
     payload = data.get("payload", {})
+    info = payload.get("list_info", {}) # Vigloo sometimes has list_info
     
     episodes = [{
-        "num": 1, # asumsikan 1 file = 1 episode untuk vigloo jika strukturnya single payload?
+        "num": 1, 
         "url": payload.get("url"),
         "cookies": payload.get("cookies", {}),
         "subtitle": None
     }]
     
-    # Butuh di-handle multi eps atau user upload multi json? 
-    # Di docs dibilang Episode TUNGGAL
-    title = filename.replace(".json", "") if filename else "Unknown Vigloo"
-    
+    title = info.get("title") or filename.replace(".json", "") if filename else "Unknown Vigloo"
+    synopsis = info.get("summary") or info.get("description") or ""
+
     return {
         "title": title,
-        "sinopsis": "",
-        "cover": "",
+        "sinopsis": synopsis,
+        "cover": info.get("poster") or "",
         "total_ep": 1,
         "episodes": episodes
     }
@@ -313,8 +313,8 @@ def parse_stardust(data: dict) -> dict:
         })
         
     return {
-        "title": info.get("title", "Unknown"),
-        "sinopsis": "",
+        "title": info.get("title") or info.get("name") or "Unknown",
+        "sinopsis": info.get("summary") or info.get("description") or info.get("intro") or "",
         "cover": info.get("poster", ""),
         "total_ep": info.get("totalEpisodes", len(episodes)),
         "episodes": episodes
