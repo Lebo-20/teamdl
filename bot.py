@@ -203,7 +203,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 if success:
                     progress[0] += 1
-                    session['downloaded'].append(output_path)
+                    # Simpan path dan data episode agar bisa dipanggil saat upload
+                    session['downloaded'].append({"path": output_path, "ep": ep})
                 else:
                     progress[1] += 1
                     session['failed_list'].append(f"EP{ep_num}")
@@ -258,7 +259,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         files = session['downloaded']
         if not files: return
-        files.sort()
+        # Urutkan berdasarkan nomor episode yang tersimpan di data 'ep'
+        files.sort(key=lambda x: x['ep'].get('num', 0))
 
         uploaded = 0
         failed_up = 0
@@ -267,6 +269,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for idx, filepath in enumerate(files):
             current = idx + 1
             
+            item = files[idx]
+            filepath = item['path']
+            ep_data = item['ep']
+            ep_num = ep_data.get('num', current)
+            ep_name = ep_data.get('name') or ep_data.get('title') or ""
+            
+            # Caption sesuai file JSON
+            display_name = f": {ep_name}" if ep_name else ""
+            caption_text = f"📺 <b>{html.escape(title)}</b>\n🎬 Episode {ep_num}{html.escape(display_name)}"
+
             # Progress update
             text = (
                 f"⬆️ <b>PROSES UPLOAD</b>\n"
@@ -300,7 +312,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await context.bot.send_document(
                         chat_id=update.effective_chat.id, # type: ignore
                         document=f,
-                        caption=f"📺 {html.escape(title)} - Episode {current}",
+                        caption=caption_text,
                         parse_mode='HTML',
                         write_timeout=600
                     )
