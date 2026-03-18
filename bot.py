@@ -280,6 +280,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ep_num = ep_data.get('num', current)
             ep_name = ep_data.get('name') or ep_data.get('title') or ""
             
+            # Cek jika judul episode sama dengan judul drama (untuk menghindari pengulangan)
+            if ep_name.strip().lower() == title.strip().lower():
+                ep_name = ""
+            
             # Caption sesuai file JSON
             display_name = f": {ep_name}" if ep_name else ""
             caption_text = f"📺 <b>{html.escape(title)}</b>\n🎬 Episode {ep_num}{html.escape(display_name)}"
