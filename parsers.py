@@ -37,7 +37,7 @@ def detect_source(data: Any) -> str:
         return "dramaflickreels"
     return "unknown"
 
-def parse_dotdrama(data: Any) -> dict:
+def parse_dotdrama(data: Any, preferred_quality: str = "720P") -> dict:
     info = data["dgiv"]["bswitc"]
     episodes_raw = data["dgiv"]["ebeer"]
     
@@ -46,12 +46,21 @@ def parse_dotdrama(data: Any) -> dict:
         qualities = item.get("pphys", [])
         url = None
         
-        # Priority: 720P -> 540P -> 480P -> 360P
-        quality_map = {str(q.get("Dbag", "")): str(q.get("Mopp", "")) for q in qualities if isinstance(q, dict)} # type: ignore
-        for q in ["720P", "540P", "480P", "360P"]:
-            if q in quality_map and quality_map[q]: # type: ignore
-                url = quality_map[q] # type: ignore
-                break
+        # Mapping quality logic
+        target = str(preferred_quality).upper()
+        if not target.endswith('P'): target += 'P'
+        
+        quality_map = {str(q.get("Dbag", "")): str(q.get("Mopp", "")) for q in qualities if isinstance(q, dict)}
+        
+        # User defined priority
+        if target in quality_map and quality_map[target]:
+            url = quality_map[target]
+        else:
+            # Fallback priority: 720P -> 540P -> 480P -> 360P
+            for q in ["720P", "540P", "480P", "360P"]:
+                if q in quality_map and quality_map[q]:
+                    url = quality_map[q]
+                    break
         
         if not url and qualities: # fallback 
             url = qualities[0].get("Mopp") or qualities[0].get("Bcold")
@@ -70,21 +79,26 @@ def parse_dotdrama(data: Any) -> dict:
         "episodes": sorted(episodes, key=lambda x: x["num"])
     }
 
-def parse_draamabox(data: Any) -> dict:
+def parse_draamabox(data: Any, preferred_quality: str = "720") -> dict:
     info = data["data"]
     episodes_raw = info.get("episodes", [])
     
     episodes = []
+    target = str(preferred_quality).replace("P", "").replace("p", "")
+    
     for item in episodes_raw:
         qualities = item.get("qualities", [])
         url = None
         
-        # Priority: 720 -> 480 -> fallback url
-        quality_map = {str(q.get("quality", "")): str(q.get("videoPath", "")) for q in qualities if isinstance(q, dict)} # type: ignore
-        for q in ["720", "480"]:
-            if q in quality_map and quality_map[q]: # type: ignore
-                url = quality_map[q] # type: ignore
-                break
+        quality_map = {str(q.get("quality", "")): str(q.get("videoPath", "")) for q in qualities if isinstance(q, dict)}
+        
+        if target in quality_map and quality_map[target]:
+            url = quality_map[target]
+        else:
+            for q in ["1080", "720", "480", "360"]:
+                if q in quality_map and quality_map[q]:
+                    url = quality_map[q]
+                    break
                 
         if not url:
             url = item.get("url")
@@ -363,12 +377,12 @@ def parse_dramaflickreels(data: Any) -> dict:
         "episodes": sorted(episodes, key=lambda x: x["num"])
     }
 
-def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
+def parse_json_data(data: Any, source_type: str, filename: str = "", preferred_quality: str = "720p") -> dict:
     """Routing fungsi parsing berdasarkan tipe."""
     if source_type == "dotdrama":
-        return parse_dotdrama(data)
+        return parse_dotdrama(data, preferred_quality)
     elif source_type == "draamabox":
-        return parse_draamabox(data)
+        return parse_draamabox(data, preferred_quality)
     elif source_type == "dramawave_info":
         return parse_dramawave(data, is_direct=False)
     elif source_type == "dramawave_direct":
@@ -390,15 +404,16 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
     elif source_type == "dramaflickreels":
         return parse_dramaflickreels(data)
     elif source_type == "draamabox_list":
-        return parse_draamabox_list(data, filename) # type: ignore
+        return parse_draamabox_list(data, filename, preferred_quality) 
     else:
         raise ValueError(f"Unknown source type: {source_type}")
 
-def parse_draamabox_list(data: List[Any], filename: str = "") -> dict:
+def parse_draamabox_list(data: List[Any], filename: str = "", preferred_quality: str = "720") -> dict:
     episodes = []
+    target = str(preferred_quality).replace("P", "").replace("p", "")
+
     for item in data:
         cdn_list = item.get("cdnList", [])
-        # Cari CDN default atau yang pertama
         v_list = []
         for cdn in cdn_list:
             if cdn.get("isDefault") == 1:
@@ -408,12 +423,15 @@ def parse_draamabox_list(data: List[Any], filename: str = "") -> dict:
             v_list = cdn_list[0].get("videoPathList", [])
             
         url = None
-        # Priority 1080 -> 720 -> 540 -> first available
         quality_map = {str(q.get("quality")): q.get("videoPath") for q in v_list if q.get("videoPath")}
-        for q in ["1080", "720", "540"]:
-            if q in quality_map:
-                url = quality_map[q]
-                break
+
+        if target in quality_map and quality_map[target]:
+            url = quality_map[target]
+        else:
+            for q in ["1080", "720", "540", "480", "360"]:
+                if q in quality_map:
+                    url = quality_map[q]
+                    break
         if not url and v_list:
             url = v_list[0].get("videoPath")
             

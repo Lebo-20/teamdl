@@ -23,6 +23,7 @@ try:
     HTTP_PROXY: str = getattr(config_file, 'HTTP_PROXY', "")
     TEMP_DIR_CONFIG: str = getattr(config_file, 'TEMP_DIR', "")
     LOCAL_BOT_API_URL: str = getattr(config_file, 'LOCAL_BOT_API_URL', "")
+    PREFERRED_QUALITY: str = getattr(config_file, 'PREFERRED_QUALITY', "720p")
 except (ImportError, ModuleNotFoundError):
     # Fallback ke Environment Variables jika config.py tidak ada
     BOT_TOKEN = os.getenv("BOT_TOKEN", "")
@@ -35,6 +36,7 @@ except (ImportError, ModuleNotFoundError):
     HTTP_PROXY = os.getenv("HTTP_PROXY", "")
     TEMP_DIR_CONFIG = os.getenv("TEMP_DIR", "")
     LOCAL_BOT_API_URL = os.getenv("LOCAL_BOT_API_URL", "")
+    PREFERRED_QUALITY = os.getenv("PREFERRED_QUALITY", "720p")
     print("⚠️ config.py tidak ditemukan di server, menggunakan Environment Variables (jika ada).")
 
 # Folder penyimpanan project-local
@@ -86,7 +88,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Format JSON tidak dikenali.")
             return
             
-        drama_info = parsers.parse_json_data(data, source_type, doc.file_name)
+        drama_info = parsers.parse_json_data(data, source_type, doc.file_name, PREFERRED_QUALITY)
         session_id = f"{user_id}_{update.message.message_id}"
         session_dir = os.path.join(TEMP_DIR, session_id)
         os.makedirs(session_dir, exist_ok=True)
