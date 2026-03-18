@@ -120,6 +120,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error JSON: {str(e)}")
     finally:
         if os.path.exists(file_path): os.remove(file_path)
+        # Hapus pesan JSON dari user untuk menjaga kebersihan chat
+        try: await update.message.delete()
+        except: pass
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -331,7 +334,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Hasil Akhir - Kirim pesan BARU (bukan edit)
         drama_info = session.get('drama_info', {})
         synopsis = drama_info.get('sinopsis') or drama_info.get('summary') or drama_info.get('description') or 'Tidak ada sinopsis.'
-        syn_short = str(synopsis)[:500] + ('...' if len(str(synopsis)) > 500 else '')
+        syn_str = str(synopsis)
+        syn_short = syn_str[:500] + ('...' if len(syn_str) > 500 else '')
         
         # Fallback variables jika data kosong
         rep_title = str(drama_info.get('title', title or "Unknown Drama")).strip()

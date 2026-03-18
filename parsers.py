@@ -162,10 +162,10 @@ def parse_dramawave(data: Any, is_direct: bool = False) -> dict:
         })
         
     return {
-        "title": info.get("name", "Unknown Title"), # type: ignore
-        "sinopsis": info.get("desc", ""), # type: ignore
-        "cover": info.get("cover", ""), # type: ignore
-        "total_ep": info.get("episode_count", len(episodes)), # type: ignore
+        "title": info.get("name") or info.get("title") or info.get("drama_name") or "Unknown Title", # type: ignore
+        "sinopsis": info.get("desc") or info.get("description") or info.get("summary") or "", # type: ignore
+        "cover": info.get("cover") or info.get("poster") or info.get("cover_image") or "", # type: ignore
+        "total_ep": info.get("episode_count") or info.get("total") or len(episodes), # type: ignore
         "episodes": episodes
     }
 
@@ -347,10 +347,10 @@ def parse_freereels(data: Any) -> dict:
         })
         
     return {
-        "title": data.get("name", "Unknown Title"),
-        "sinopsis": data.get("desc", ""),
-        "cover": data.get("cover", ""),
-        "total_ep": data.get("episode_count", len(episodes)),
+        "title": data.get("name") or data.get("title") or data.get("drama_name") or "Unknown Title",
+        "sinopsis": data.get("desc") or data.get("description") or "",
+        "cover": data.get("cover") or data.get("poster") or "",
+        "total_ep": data.get("episode_count") or len(episodes),
         "episodes": episodes
     }
 
