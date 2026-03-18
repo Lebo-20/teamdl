@@ -394,12 +394,34 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🔄 Restarting...")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+async def cleartmp_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not update.message: return
+    if update.effective_user.id != getattr(config_file if 'config_file' in globals() else None, 'OWNER_ID', 0): return
+    try:
+        if os.path.exists(TEMP_DIR):
+            shutil.rmtree(TEMP_DIR)
+            os.makedirs(TEMP_DIR, exist_ok=True)
+            await update.message.reply_text("✅ Folder penyimpanan sementara berhasil dibersihkan!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Gagal membersihkan: {e}")
+
 from telegram.request import HTTPXRequest
 
 def main():
     if not BOT_TOKEN:
         print("❌ BOT_TOKEN tidak ditemukan! Isi di config.py atau Environment Variable.")
         return
+        
+    # Bersihkan folder temp saat bot baru dinyalakan
+    if os.path.exists(TEMP_DIR):
+        print(f"🧹 Membersihkan sisa file di {TEMP_DIR}...")
+        # Gunakan rmtree dengan ignore_errors=True untuk keamanan
+        for item in os.listdir(TEMP_DIR):
+            item_path = os.path.join(TEMP_DIR, item)
+            try:
+                if os.path.isdir(item_path): shutil.rmtree(item_path)
+                else: os.remove(item_path)
+            except: pass
     
     # Request setup for stability
     t_request = HTTPXRequest(connect_timeout=60, read_timeout=60, write_timeout=600)
@@ -418,6 +440,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("update", update_bot))
     app.add_handler(CommandHandler("restart", restart_bot))
+    app.add_handler(CommandHandler("cleartmp", cleartmp_cmd))
     app.add_handler(MessageHandler(filters.Document.FileExtension("json"), handle_document))
     app.add_handler(CallbackQueryHandler(handle_callback))
     
