@@ -14,3 +14,13 @@ STATUS_UPDATE_INTERVAL = 2
 TELEGRAM_MAX_SIZE = 2000 * 1024 * 1024  # 2GB Limit API
 ALLOWED_USERS = []  # User ID yang diizinkan (integer)
 OWNER_ID = 0 # Ganti dengan User ID Anda untuk akses FITUR UPDATE
+
+# Concurrency & Speed
+MAX_CONCURRENT_DOWNLOADS = 3
+WORKERS = 10
+
+# Proxy
+HTTP_PROXY = ""
+
+# Telegram Local Bot API Server (Wajib jika ingin upload > 50MB hingga 2GB)
+LOCAL_BOT_API_URL = "" 

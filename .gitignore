@@ -17,7 +17,7 @@ coverage.xml
 .pytest_cache/
 *.json
 !test.json
-# config.py
+config.py
 /tmp/
 *.mp4
 *.mkv
