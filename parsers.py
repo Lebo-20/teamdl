@@ -152,7 +152,15 @@ def parse_dramawave(data: Any, is_direct: bool = False) -> dict:
         
     episodes = []
     for idx, item in enumerate(episodes_raw):
-        url = item.get("external_audio_h264_m3u8") or item.get("external_audio_h265_m3u8")
+        # Cari link di berbagai kemungkinan kolom (Dramawave sering ganti-ganti)
+        url = (
+            item.get("external_audio_h264_m3u8") or 
+            item.get("external_audio_h265_m3u8") or 
+            item.get("video_url") or 
+            item.get("m3u8_url") or 
+            item.get("play_url") or
+            item.get("url")
+        )
         sub_url = _get_indonesian_sub(item.get("subtitle_list", []), "dramawave")
         
         episodes.append({
