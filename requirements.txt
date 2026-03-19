@@ -1,5 +1,6 @@
-python-telegram-bot>=20.0
+telethon
 requests
 yt-dlp
 aiohttp
 aiofiles
+cryptg
