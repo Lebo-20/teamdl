@@ -281,11 +281,20 @@ async def handle_callback(event):
                 converted = filepath.rsplit('.', 1)[0] + f".{target_format}"
                 if os.path.exists(converted): os.remove(converted)
                 try:
-                    subprocess.run(["ffmpeg", "-y", "-i", filepath, "-c", "copy", converted], 
-                                 check=True, capture_output=True)
+                    # Pastikan menyalin semua stream (video, audio, subtitle) dengan -map 0
+                    # Gunakan codec subtitle yang tepat sesuai format target
+                    sub_codec = "srt" if target_format == "MKV" else "mov_text"
+                    cmd = ["ffmpeg", "-y", "-i", filepath, "-map", "0", "-c", "copy", "-c:s", sub_codec, converted]
+                    subprocess.run(cmd, check=True, capture_output=True)
                     upload_path = converted
                 except Exception as e:
-                    print(f"FFmpeg Error: {e}")
+                    print(f"FFmpeg Convert Error: {e}")
+                    # Jika gagal (mungkin stream tidak kompatibel), coba copy biasa tanpa -map 0
+                    try:
+                        subprocess.run(["ffmpeg", "-y", "-i", filepath, "-c", "copy", converted], 
+                                     check=True, capture_output=True)
+                        upload_path = converted
+                    except: pass
 
             try:
                 if not os.path.exists(upload_path):
