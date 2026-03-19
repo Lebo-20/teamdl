@@ -3,14 +3,26 @@ API_ID = 1234567
 API_HASH = "your_api_hash"
 BOT_TOKEN = "your_bot_token"
 
+# Setting Local Bot API (Penting untuk upload > 50MB)
+USE_LOCAL_API = True
+LOCAL_API_URL = "http://localhost:8081" # Sesuaikan jika beda port
+
 # Folder sementara untuk download file
-TEMP_DIR = "./tmp/drama_bot/"
+TEMP_DIR = "./downloads/"
 
 # Setting default
 PREFERRED_QUALITY = "720p"
 MAX_RETRY = 3
-TIMEOUT_DL = 600
+TIMEOUT_DL = 3600 # 1 Jam (sesuaikan untuk file sangat besar)
 STATUS_UPDATE_INTERVAL = 2
-TELEGRAM_MAX_SIZE = 2000 * 1024 * 1024  # 2GB Limit API
+TELEGRAM_MAX_SIZE = 20000 * 1024 * 1024  # 20GB (Anggap tanpa batas untuk Local API)
 ALLOWED_USERS = []  # User ID yang diizinkan (integer)
 OWNER_ID = 0 # Ganti dengan User ID Anda untuk akses FITUR UPDATE
+HTTP_PROXY = None
+
+# Max concurrent download
+MAX_CONCURRENT_DOWNLOADS = 3
+WORKERS = 4
+
+# Gunakan aria2c sebagai downloader utama (True/False)
+USE_ARIA2 = True

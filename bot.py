@@ -8,14 +8,17 @@ import telegram # type: ignore
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup # type: ignore
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters, ContextTypes # type: ignore
 import config as config_file
-from config import BOT_TOKEN, ALLOWED_USERS, TELEGRAM_MAX_SIZE, TIMEOUT_DL, MAX_CONCURRENT_DOWNLOADS, WORKERS, HTTP_PROXY # type: ignore
+from config import (
+    BOT_TOKEN, ALLOWED_USERS, TELEGRAM_MAX_SIZE, TIMEOUT_DL, 
+    MAX_CONCURRENT_DOWNLOADS, WORKERS, HTTP_PROXY, 
+    USE_LOCAL_API, LOCAL_API_URL, USE_ARIA2, TEMP_DIR
+) # type: ignore
 import parsers # type: ignore
 import downloader # type: ignore
 from typing import Any
 import shutil
 
-# Folder penyimpanan project-local
-TEMP_DIR = os.path.join(os.getcwd(), "downloads")
+# Ensure TEMP_DIR exists
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 # Kamus penyimpanan session per user (sementara di memory)
@@ -152,14 +155,22 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         success = await downloader.download_video_ytdlp(url, output_path)
                         if not success: success = await downloader.download_aria2(url, output_path)
                     elif ".m3u8" in url or source in ["dramawave_info", "dramawave_direct", "freereels", "goodshort", "meloshort", "stardust"]:
-                        success = await downloader.download_video_ytdlp(url, output_path)
-                        if not success: success = await downloader.download_video_ffmpeg(url, output_path)
-                    else:
-                        if source in ["draamabox", "draamabox_list"]:
-                            success = await downloader.download_video_ytdlp(url, output_path)
-                            if not success: success = await downloader.download_aria2(url, output_path)
-                        else:
+                        if USE_ARIA2:
                             success = await downloader.download_aria2(url, output_path)
+                        if not success:
+                            success = await downloader.download_video_ytdlp(url, output_path)
+                        if not success:
+                            success = await downloader.download_video_ffmpeg(url, output_path)
+                    else:
+                        if USE_ARIA2:
+                            success = await downloader.download_aria2(url, output_path)
+                        
+                        if not success:
+                            if source in ["draamabox", "draamabox_list"]:
+                                success = await downloader.download_video_ytdlp(url, output_path)
+                                if not success: success = await downloader.download_aria2(url, output_path)
+                            else:
+                                success = await downloader.download_aria2(url, output_path)
                     
                     # Subtitle
                     sub_url = ep.get('subtitle')
@@ -320,10 +331,17 @@ def main():
     if BOT_TOKEN == "YOUR_BOT_TOKEN_HERE": return
     
     # Request setup for stability
-    t_request = HTTPXRequest(connect_timeout=30, read_timeout=30, write_timeout=30)
-    if HTTP_PROXY: t_request = HTTPXRequest(connect_timeout=30, proxy_url=HTTP_PROXY)
+    t_request = HTTPXRequest(connect_timeout=TIMEOUT_DL, read_timeout=TIMEOUT_DL, write_timeout=TIMEOUT_DL)
+    if HTTP_PROXY: t_request = HTTPXRequest(connect_timeout=TIMEOUT_DL, proxy_url=HTTP_PROXY)
         
-    app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).request(t_request).build()
+    builder = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).request(t_request)
+    
+    if USE_LOCAL_API and LOCAL_API_URL:
+        builder.base_url(f"{LOCAL_API_URL}/bot")
+        builder.local_mode(True)
+        print(f"Using Local Bot API: {LOCAL_API_URL}")
+
+    app = builder.build()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("update", update_bot))
