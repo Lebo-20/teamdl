@@ -163,7 +163,7 @@ async def handle_callback(event):
                     return
 
                 safe_title = "".join([c for c in title if c.isalnum() or c==' ']).strip()
-                ep_filename = f"{safe_title} - EP{ep_num:02d}.mp4"
+                ep_filename = f"{safe_title} Ep{ep_num}.mp4"
                 output_path = os.path.join(session['session_dir'], ep_filename)
                 
                 success = False
