@@ -80,10 +80,14 @@ async def handle_document(event):
             "source": source_type,
             "session_dir": session_dir,
             "downloaded": [],
-            "failed_list": []
+            "failed_list": [],
+            "format": "MP4"
         }
         
         text = f"🎬 <b>{html.escape(drama_info['title'])}</b>\n\n"
+        if drama_info.get('sinopsis'):
+            text += f"📖 <b>Sinopsis:</b>\n<i>{html.escape(drama_info['sinopsis'][:300])}{'...' if len(drama_info['sinopsis']) > 300 else ''}</i>\n\n"
+            
         text += f"📺 <b>Total:</b> {drama_info['total_ep']} episode\n"
         text += f"📦 <b>Platform:</b> {html.escape(source_type.capitalize())}\n\n"
         text += f"Lanjut download {drama_info['total_ep']} episode?"
@@ -148,22 +152,17 @@ async def handle_callback(event):
                 source = session['source']
                 
                 try:
+                    # MENGUTAMAKAN YT-DLP UNTUK KESTABILAN
                     if source == "vigloo":
                         cookies = ep.get('cookies', {})
                         headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in cookies.items()])} if cookies else {}
                         success = await downloader.download_video_ytdlp(url, output_path, headers)
-                    elif source in ["flikreels", "dramaflickreels"]:
-                        success = await downloader.download_video_ytdlp(url, output_path)
-                        if not success: success = await downloader.download_aria2(url, output_path)
-                    elif ".m3u8" in url or source in ["dramawave_info", "dramawave_direct", "freereels", "goodshort", "meloshort", "stardust"]:
-                        success = await downloader.download_video_ytdlp(url, output_path)
-                        if not success: success = await downloader.download_video_ffmpeg(url, output_path)
                     else:
-                        if source in ["draamabox", "draamabox_list"]:
-                            success = await downloader.download_video_ytdlp(url, output_path)
-                            if not success: success = await downloader.download_aria2(url, output_path)
-                        else:
+                        success = await downloader.download_video_ytdlp(url, output_path)
+                        if not success and USE_ARIA2: 
                             success = await downloader.download_aria2(url, output_path)
+                        if not success: 
+                            success = await downloader.download_video_ffmpeg(url, output_path)
                     
                     # Subtitle
                     sub_url = ep.get('subtitle')
@@ -226,11 +225,12 @@ async def handle_callback(event):
 
     elif data.startswith("up_"):
         parts = data.split("_", 2)
-        target_format = parts[1]
+        target_format = parts[1].upper()
         session_id = parts[2]
         session = user_sessions.get(session_id)
         if not session: return
 
+        session['format'] = target_format
         files = session['downloaded']
         if not files:
             await event.edit("⚠️ Tidak ada file untuk diupload.")
@@ -257,6 +257,7 @@ async def handle_callback(event):
             upload_path = filepath
             if not filepath.endswith(f".{target_format}"):
                 converted = filepath.rsplit('.', 1)[0] + f".{target_format}"
+                if os.path.exists(converted): os.remove(converted)
                 try:
                     subprocess.run(["ffmpeg", "-y", "-i", filepath, "-c", "copy", converted], 
                                  check=True, capture_output=True)
@@ -287,7 +288,22 @@ async def handle_callback(event):
             
             await asyncio.sleep(2)
 
-        report = f"✅ <b>UPLOAD SELESAI!</b>\n📦 {html.escape(title)}\n✅ Berhasil: {uploaded}\n❌ Gagal: {failed_up}"
+        # FINAL REPORT CANTIK
+        drama_info = session['drama_info']
+        sinopsis = drama_info.get('sinopsis', 'Tidak ada sinopsis.')
+        report = (
+            f"✅ <b>PROSES SELESAI!</b>\n"
+            f"──────────────────────────\n"
+            f"📦 <b>Drama:</b> {html.escape(title)}\n"
+            f"🎬 <b>Format:</b> {session['format']}\n"
+            f"📖 <b>Sinopsis:</b>\n<i>{html.escape(sinopsis)}</i>\n"
+            f"──────────────────────────\n"
+            f"⬆️ <b>Total File</b>    : {len(files)}\n"
+            f"✅ <b>Berhasil</b>      : {uploaded}\n"
+            f"❌ <b>Gagal Upload</b>  : {failed_up}\n"
+            f"──────────────────────────\n"
+            f"🥳 Semua proses telah selesai! 🎉"
+        )
         await event.respond(report, parse_mode='html')
         user_sessions.pop(session_id, None)
         shutil.rmtree(session['session_dir'], ignore_errors=True)
