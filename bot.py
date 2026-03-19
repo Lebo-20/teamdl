@@ -84,13 +84,23 @@ async def handle_document(event):
             "format": "MP4"
         }
         
-        text = f"🎬 <b>{html.escape(drama_info['title'])}</b>\n\n"
+        text = (
+            f"🎬 <b>{html.escape(drama_info['title'])}</b>\n"
+            f"──────────────────────────\n"
+        )
+        
         if drama_info.get('sinopsis'):
-            text += f"📖 <b>Sinopsis:</b>\n<i>{html.escape(drama_info['sinopsis'][:300])}{'...' if len(drama_info['sinopsis']) > 300 else ''}</i>\n\n"
+            text += f"📖 <b>Sinopsis:</b>\n<i>{html.escape(drama_info['sinopsis'][:400])}{'...' if len(drama_info['sinopsis']) > 400 else ''}</i>\n\n"
             
-        text += f"📺 <b>Total:</b> {drama_info['total_ep']} episode\n"
-        text += f"📦 <b>Platform:</b> {html.escape(source_type.capitalize())}\n\n"
-        text += f"Lanjut download {drama_info['total_ep']} episode?"
+        if drama_info.get('tags'):
+            text += f"🏷️ <b>Tags:</b> {html.escape(drama_info['tags'])}\n"
+            
+        text += (
+            f"📺 <b>Total:</b> {drama_info['total_ep']} episode\n"
+            f"📦 <b>Platform:</b> {html.escape(source_type.capitalize())}\n"
+            f"──────────────────────────\n"
+            f"Lanjut download semua episode?"
+        )
 
         buttons = [
             [
@@ -159,8 +169,12 @@ async def handle_callback(event):
                         success = await downloader.download_video_ytdlp(url, output_path, headers)
                     else:
                         success = await downloader.download_video_ytdlp(url, output_path)
-                        if not success and USE_ARIA2: 
+                        
+                        # Aria2 hanya untuk file direct (bukan m3u8)
+                        if not success and USE_ARIA2 and ".m3u8" not in url: 
                             success = await downloader.download_aria2(url, output_path)
+                            
+                        # ffmpeg sebagai last resort untuk m3u8
                         if not success: 
                             success = await downloader.download_video_ffmpeg(url, output_path)
                     

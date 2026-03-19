@@ -80,7 +80,15 @@ async def download_aria2(url: str, output_path: str, headers: Optional[Dict[str,
             stderr=subprocess.DEVNULL
         )
         await process.communicate()
-        return process.returncode == 0
+        
+        # Cek apakah file benar-benar ada dan ukurannya masuk akal
+        if process.returncode == 0 and os.path.exists(output_path):
+            if os.path.getsize(output_path) > 1024 * 512: # Minimal 512KB (bukan playlist m3u8)
+                return True
+            else:
+                print(f"Warning: File too small ({os.path.getsize(output_path)} bytes), possible playlist or error page.")
+                if os.path.exists(output_path): os.remove(output_path)
+        return False
     except Exception as e:
         print(f"Aria2 error: {e}")
         return False
@@ -121,7 +129,14 @@ async def download_video_ffmpeg(m3u8_url: str, output_path: str, headers: dict |
             stderr=subprocess.DEVNULL
         )
         await process.communicate()
-        return process.returncode == 0
+        
+        if process.returncode == 0 and os.path.exists(output_path):
+            if os.path.getsize(output_path) > 1024 * 1024: # Minimal 1MB untuk video
+                return True
+            else:
+                print(f"Warning: ffmpeg output too small ({os.path.getsize(output_path)} bytes).")
+                if os.path.exists(output_path): os.remove(output_path)
+        return False
     except Exception as e:
         print(f"FFmpeg async error: {e}")
         return False
@@ -155,7 +170,14 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
     try:
         process = await asyncio.create_subprocess_exec(*cmd)
         await process.communicate()
-        return process.returncode == 0
+        
+        if process.returncode == 0 and os.path.exists(output_path):
+            if os.path.getsize(output_path) > 1024 * 1024: # Minimal 1MB
+                return True
+            else:
+                print(f"Warning: yt-dlp output too small ({os.path.getsize(output_path)} bytes).")
+                if os.path.exists(output_path): os.remove(output_path)
+        return False
     except Exception as e:
         print(f"yt-dlp async error: {e}")
         return False
