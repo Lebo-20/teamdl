@@ -257,7 +257,12 @@ async def handle_callback(event):
         if not files:
             await event.edit("⚠️ Tidak ada file untuk diupload.")
             return
-        files.sort()
+        # Natural Sort agar urutan upload pas (Ep1, Ep2, dst... bukan Ep1, Ep10, Ep2)
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+        
+        files.sort(key=natural_sort_key)
 
         uploaded = 0
         failed_up = 0
