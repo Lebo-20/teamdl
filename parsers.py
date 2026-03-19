@@ -147,10 +147,14 @@ def parse_dramawave(data: Any, is_direct: bool = False) -> dict:
             "subtitle": sub_url
         })
         
+    tags_list = info.get("content_tags", [])
+    tags_str = " • ".join(tags_list) if isinstance(tags_list, list) else ""
+        
     return {
         "title": info.get("name", "Unknown Title"), # type: ignore
         "sinopsis": info.get("desc", ""), # type: ignore
         "cover": info.get("cover", ""), # type: ignore
+        "tags": tags_str,
         "total_ep": info.get("episode_count", len(episodes)), # type: ignore
         "episodes": episodes
     }
