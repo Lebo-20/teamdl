@@ -9,7 +9,6 @@ from typing import Any
 
 # Telethon Imports
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import DocumentAttributeVideo
 import config as config_file
 from config import (
     BOT_TOKEN, API_ID, API_HASH, ALLOWED_USERS, TELEGRAM_MAX_SIZE, 
@@ -154,15 +153,17 @@ async def handle_callback(event):
                         headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in cookies.items()])} if cookies else {}
                         success = await downloader.download_video_ytdlp(url, output_path, headers)
                     elif source in ["flikreels", "dramaflickreels"]:
-                        if USE_ARIA2: success = await downloader.download_aria2(url, output_path)
-                        if not success: success = await downloader.download_video_ytdlp(url, output_path)
+                        success = await downloader.download_video_ytdlp(url, output_path)
+                        if not success: success = await downloader.download_aria2(url, output_path)
                     elif ".m3u8" in url or source in ["dramawave_info", "dramawave_direct", "freereels", "goodshort", "meloshort", "stardust"]:
-                        if USE_ARIA2: success = await downloader.download_aria2(url, output_path)
-                        if not success: success = await downloader.download_video_ytdlp(url, output_path)
+                        success = await downloader.download_video_ytdlp(url, output_path)
                         if not success: success = await downloader.download_video_ffmpeg(url, output_path)
                     else:
-                        if USE_ARIA2: success = await downloader.download_aria2(url, output_path)
-                        if not success: success = await downloader.download_video_ytdlp(url, output_path)
+                        if source in ["draamabox", "draamabox_list"]:
+                            success = await downloader.download_video_ytdlp(url, output_path)
+                            if not success: success = await downloader.download_aria2(url, output_path)
+                        else:
+                            success = await downloader.download_aria2(url, output_path)
                     
                     # Subtitle
                     sub_url = ep.get('subtitle')
@@ -267,7 +268,7 @@ async def handle_callback(event):
                 if not os.path.exists(upload_path):
                     raise FileNotFoundError(f"File not found: {upload_path}")
 
-                # Telethon upload (handles large files)
+                # Telethon upload 
                 await client.send_file(
                     event.chat_id,
                     upload_path,
