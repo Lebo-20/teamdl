@@ -109,8 +109,16 @@ async def handle_document(event):
             ]
         ]
         
+        # Kirim Detail Drama (dengan Cover sebagai Foto jika ada)
+        cover_path = None
         if drama_info.get('cover'):
-            await event.respond(text, file=drama_info['cover'], buttons=buttons, parse_mode='html')
+            temp_cover = os.path.join(session_dir, "cover.jpg")
+            if await downloader.download_file(drama_info['cover'], temp_cover):
+                cover_path = temp_cover
+
+        if cover_path:
+            await event.respond(text, file=cover_path, buttons=buttons, parse_mode='html')
+            if os.path.exists(cover_path): os.remove(cover_path)
         else:
             await event.respond(text, buttons=buttons, parse_mode='html')
 
