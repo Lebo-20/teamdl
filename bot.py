@@ -116,14 +116,20 @@ async def handle_document(event):
             if await downloader.download_file(drama_info['cover'], temp_cover):
                 cover_path = temp_cover
 
-        if cover_path:
-            await event.respond(text, file=cover_path, buttons=buttons, parse_mode='html')
-            if os.path.exists(cover_path): os.remove(cover_path)
-        else:
+        try:
+            if cover_path:
+                await event.respond(text, file=cover_path, buttons=buttons, parse_mode='html')
+                if os.path.exists(cover_path): os.remove(cover_path)
+            else:
+                await event.respond(text, buttons=buttons, parse_mode='html')
+        except Exception as img_err:
+            print(f"Image Send Error: {img_err}")
+            # Fallback ke teks saja jika gambar gagal diproses/dikirim
             await event.respond(text, buttons=buttons, parse_mode='html')
+            if cover_path and os.path.exists(cover_path): os.remove(cover_path)
 
     except Exception as e:
-        await event.respond(f"❌ Error JSON: {str(e)}")
+        await event.respond(f"❌ Error: {str(e)}")
     finally:
         if os.path.exists(file_path): os.remove(file_path)
 
