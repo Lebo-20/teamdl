@@ -35,6 +35,8 @@ def detect_source(data: Any) -> str:
         return "freereels"
     if data.get("drama", {}).get("source") == "dramaflickreels":
         return "dramaflickreels"
+    if "videoInfo" in data and "episodesInfo" in data:
+        return "velolo"
     return "unknown"
 
 def parse_dotdrama(data: Any) -> dict:
@@ -367,6 +369,30 @@ def parse_dramaflickreels(data: Any) -> dict:
         "episodes": sorted(episodes, key=lambda x: x["num"])
     }
 
+def parse_velolo(data: Any) -> dict:
+    video_info = data.get("videoInfo", {})
+    episodes_raw = data.get("episodesInfo", {}).get("rows", [])
+    
+    episodes = []
+    for item in episodes_raw:
+        episodes.append({
+            "num": item.get("orderNumber", 0) + 1,
+            "url": item.get("videoAddress"),
+            "subtitle": item.get("zimu")
+        })
+        
+    labels = video_info.get("label", [])
+    tags_str = " • ".join(labels) if isinstance(labels, list) else ""
+    
+    return {
+        "title": video_info.get("name", "Unknown Title"),
+        "sinopsis": video_info.get("introduction", ""),
+        "cover": video_info.get("cover", ""),
+        "tags": tags_str,
+        "total_ep": video_info.get("episode", len(episodes)),
+        "episodes": sorted(episodes, key=lambda x: x["num"])
+    }
+
 def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
     """Routing fungsi parsing berdasarkan tipe."""
     if source_type == "dotdrama":
@@ -393,6 +419,8 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_freereels(data)
     elif source_type == "dramaflickreels":
         return parse_dramaflickreels(data)
+    elif source_type == "velolo":
+        return parse_velolo(data)
     elif source_type == "draamabox_list":
         return parse_draamabox_list(data, filename) # type: ignore
     else:
