@@ -76,6 +76,13 @@ def parse_dotdrama(data: Any) -> dict:
         "episodes": sorted(episodes, key=lambda x: x["num"])
     }
 
+def _wrap_dramabox_url(url: str) -> str:
+    """Bungkus URL Dramabox dengan decryptor Sansekai jika terdeteksi enkripsi Aliyun."""
+    if not url: return url
+    if ".encrypt" in url or "etavirp_nuyila" in url:
+        return f"https://api.sansekai.my.id/api/dramabox/decrypt-stream?url={urllib.parse.quote(url)}"
+    return url
+
 def parse_draamabox(data: Any) -> dict:
     info = data["data"]
     episodes_raw = info.get("episodes", [])
@@ -97,7 +104,7 @@ def parse_draamabox(data: Any) -> dict:
             
         episodes.append({
             "num": item.get("chapterIndex", 0) + 1,
-            "url": url,
+            "url": _wrap_dramabox_url(url),
             "subtitle": None
         })
         
@@ -463,7 +470,7 @@ def parse_draamabox_list(data: Any, filename: str = "") -> dict:
         episodes.append({
             "num": item.get("chapterIndex", 0) + 1,
             "name": item.get("chapterName", f"EP {item.get('chapterIndex', 0) + 1}"),
-            "url": url,
+            "url": _wrap_dramabox_url(url),
             "is_lock": 1 if item.get("isCharge") else 0,
             "subtitle": sub_url
         })
