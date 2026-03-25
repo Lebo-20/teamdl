@@ -720,6 +720,8 @@ async def handle_callback_download(event, session_id):
         f"✅ Berhasil: {counts['success']} | ❌ Gagal: {counts['failed']}{html.escape(failed_text)}\n"
         f"⏱️ <b>Total Waktu:</b> {duration_str}\n"
         f"\nPilih format upload:"
+    )
+
     buttons = [
         [
             Button.inline("📦 Upload MKV", data=f"up_mkv_{session_id}"),
