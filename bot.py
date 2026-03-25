@@ -11,6 +11,7 @@ from typing import Any
 
 # Telethon Imports
 from telethon import TelegramClient, events, Button
+from telethon.tl.types import DocumentAttributeVideo
 import config as config_file
 from config import (
     BOT_TOKEN, API_ID, API_HASH, ALLOWED_USERS, TELEGRAM_MAX_SIZE, 
@@ -136,6 +137,10 @@ async def handle_document(event):
     finally:
         if os.path.exists(file_path): os.remove(file_path)
 
+@client.on(events.NewMessage(func=lambda e: e.document and e.document.mime_type != 'application/json'))
+async def handle_any_file_hint(event):
+    await event.respond("👆 <b>Balas (reply)</b> ke pesan file ini dengan nama baru untuk mengganti nama dan mengirim ulang sebagai media.", parse_mode='html')
+
 @client.on(events.NewMessage(func=lambda e: not e.text.startswith('/') and e.is_reply))
 async def handle_rename_reply(event):
     user_id = event.sender_id
@@ -200,13 +205,16 @@ async def handle_rename_reply(event):
             new_path,
             caption=f"📁 <b>{html.escape(new_name)}</b>",
             thumb=thumb_path if has_thumb else None,
-            duration=v_info["duration"],
-            width=v_info["width"],
-            height=v_info["height"],
             supports_streaming=True,
             force_document=False,
             parse_mode='html',
             reply_to=reply_msg.id,
+            attributes=[DocumentAttributeVideo(
+                duration=v_info["duration"],
+                w=v_info["width"],
+                h=v_info["height"],
+                supports_streaming=True
+            )],
             progress_callback=up_progress
         )
         

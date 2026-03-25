@@ -333,12 +333,7 @@ async def get_video_info(video_path: str) -> dict:
     """Ambil informasi durasi, lebar, dan tinggi video menggunakan ffprobe."""
     import json
     cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=width,height",
-        "-of", "json", "video_path"
-    ]
-    # Oops, mistake in command above, fixing it
-    cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=width,height",
+        "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=duration,width,height",
         "-of", "json", video_path
     ]
     try:
@@ -350,7 +345,15 @@ async def get_video_info(video_path: str) -> dict:
         stdout, _ = await process.communicate()
         data = json.loads(stdout)
         
-        duration = float(data.get("format", {}).get("duration", 0))
+        # 1. Cari durasi di Format
+        duration_raw = data.get("format", {}).get("duration")
+        
+        # 2. Cari di Streams jika tidak ada di format
+        streams = data.get("streams", [])
+        if duration_raw is None and streams:
+            duration_raw = streams[0].get("duration")
+            
+        duration = float(duration_raw) if duration_raw else 0
         
         info = {
             "duration": int(duration),
@@ -358,14 +361,16 @@ async def get_video_info(video_path: str) -> dict:
             "height": 0
         }
         
-        streams = data.get("streams", [])
         for s in streams:
-            if "width" in s and "height" in s:
-                info["width"] = int(s.get("width", 0))
-                info["height"] = int(s.get("height", 0))
+            if "width" in s and "height" in s and s.get("width") and s.get("height"):
+                info["width"] = int(s["width"])
+                info["height"] = int(s["height"])
                 break
+                
+        # Jika durasi masih 0, kembalikan default kecil agar tidak error 0:00
+        if info["duration"] < 1: info["duration"] = 1
             
         return info
     except Exception as e:
         print(f"FFprobe error: {e}")
-        return {"duration": 0, "width": 0, "height": 0}
+        return {"duration": 1, "width": 0, "height": 0}
