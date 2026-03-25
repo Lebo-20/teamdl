@@ -373,18 +373,32 @@ async def handle_callback_download(event, session_id):
         user_sessions.pop(session_id, None)
         shutil.rmtree(session['session_dir'], ignore_errors=True)
 
-@client.on(events.NewMessage(pattern='/update', from_users=getattr(config_file, 'OWNER_ID', 0)))
+@client.on(events.NewMessage(pattern='/id'))
+async def get_id(event):
+    await event.respond(f"ID Anda: `{event.sender_id}`\n\nMasukkan ID di atas ke dalam `OWNER_ID` di file `config.py` agar bisa menggunakan perintah update.")
+
+@client.on(events.NewMessage(pattern='/update'))
 async def update_bot(event):
-    msg = await event.respond("🔄 Updating...")
+    owner_id = getattr(config_file, 'OWNER_ID', 0)
+    if event.sender_id != owner_id:
+        return # Abaikan jika bukan owner
+        
+    msg = await event.respond("🔄 Menarik update terbaru dari GitHub...")
     try:
-        subprocess.run(["git", "pull"], check=True)
-        await msg.edit("✅ Updated! Restarting...")
+        # Gunakan reset --hard agar tidak error saat ada konflik file lokal
+        subprocess.run(["git", "fetch", "--all"], check=True)
+        subprocess.run(["git", "reset", "--hard", "origin/main"], check=True)
+        
+        await msg.edit("✅ Update berhasil! Memulai ulang bot...")
         os.execv(sys.executable, [sys.executable] + sys.argv)
     except Exception as e:
-        await msg.edit(f"❌ Failed: {e}")
+        await msg.edit(f"❌ Update Gagal: {str(e)}")
 
-@client.on(events.NewMessage(pattern='/restart', from_users=getattr(config_file, 'OWNER_ID', 0)))
+@client.on(events.NewMessage(pattern='/restart'))
 async def restart_bot(event):
+    owner_id = getattr(config_file, 'OWNER_ID', 0)
+    if event.sender_id != owner_id:
+        return
     await event.respond("🔄 Restarting...")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
