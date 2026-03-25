@@ -104,9 +104,10 @@ async def handle_document(event):
 
         buttons = [
             [
-                Button.inline("✅ Ya, Download", data=f"dl_{session_id}"),
-                Button.inline("❌ Batal", data=f"cancel_{session_id}")
-            ]
+                Button.inline("🎬 Softsub (MKV/MP4)", data=f"sub_soft_{session_id}"),
+                Button.inline("🎞️ Hardsub (Burn-in)", data=f"sub_hard_{session_id}")
+            ],
+            [Button.inline("❌ Batal", data=f"cancel_{session_id}")]
         ]
         
         # Kirim Detail Drama (dengan Cover sebagai Foto jika ada)
@@ -145,111 +146,133 @@ async def handle_callback(event):
             shutil.rmtree(session['session_dir'], ignore_errors=True)
         await event.edit("❌ Proses dibatalkan.")
         
-    elif data.startswith("dl_"):
-        session_id = data.split("dl_")[1]
+    elif data.startswith("sub_"):
+        parts = data.split("_", 2)
+        sub_type = parts[1] # 'soft' or 'hard'
+        session_id = parts[2]
         session = user_sessions.get(session_id)
         if not session:
             await event.edit("⚠️ Sesi habis.")
             return
             
-        drama_info = session['drama_info']
-        total = drama_info['total_ep']
-        title = drama_info['title']
-        counts = {"success": 0, "failed": 0}
-        
-        async def download_task(idx, ep, semaphore):
-            current_num = idx + 1
-            ep_num = ep.get('num', current_num)
-            url = ep.get('url')
+        session['sub_type'] = sub_type
+        # After choosing sub type, automatically start download
+        # Redirect to 'dl_' logic or call it directly. 
+        # For simplicity, we trigger the download here
+        await handle_callback_download(event, session_id)
+
+    elif data.startswith("dl_"):
+        session_id = data.split("dl_")[1]
+        await handle_callback_download(event, session_id)
+
+async def handle_callback_download(event, session_id):
+    session = user_sessions.get(session_id)
+    if not session: return
             
-            async with semaphore:
-                if not url:
-                    counts["failed"] += 1
-                    session['failed_list'].append(f"EP{ep_num}(NoURL)")
-                    return
+    drama_info = session['drama_info']
+    total = drama_info['total_ep']
+    title = drama_info['title']
+    counts = {"success": 0, "failed": 0}
+    
+    async def download_task(idx, ep, semaphore):
+        current_num = idx + 1
+        ep_num = ep.get('num', current_num)
+        url = ep.get('url')
+        
+        async with semaphore:
+            if not url:
+                counts["failed"] += 1
+                session['failed_list'].append(f"EP{ep_num}(NoURL)")
+                return
 
-                safe_title = "".join([c for c in title if c.isalnum() or c==' ']).strip()
-                ep_filename = f"{safe_title} Ep{ep_num}.mp4"
-                output_path = os.path.join(session['session_dir'], ep_filename)
-                
-                success = False
-                source = session['source']
-                
-                try:
-                    # MENGUTAMAKAN YT-DLP UNTUK KESTABILAN
-                    if source == "vigloo":
-                        cookies = ep.get('cookies', {})
-                        headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in cookies.items()])} if cookies else {}
-                        success = await downloader.download_video_ytdlp(url, output_path, headers)
-                    else:
-                        success = await downloader.download_video_ytdlp(url, output_path)
-                        
-                        # Aria2 hanya untuk file direct (bukan m3u8)
-                        if not success and USE_ARIA2 and ".m3u8" not in url: 
-                            success = await downloader.download_aria2(url, output_path)
-                            
-                        # ffmpeg sebagai last resort untuk m3u8
-                        if not success: 
-                            success = await downloader.download_video_ffmpeg(url, output_path)
-                    
-                    # Subtitle
-                    sub_url = ep.get('subtitle')
-                    if success and sub_url:
-                        sub_path = os.path.join(session['session_dir'], f"temp_sub_{ep_num}.srt")
-                        if await downloader.download_file(sub_url, sub_path):
-                            new_out = await downloader.mux_subtitle(output_path, sub_path, "mp4")
-                            if new_out:
-                                if os.path.exists(output_path): os.remove(output_path)
-                                if os.path.exists(sub_path): os.remove(sub_path)
-                                output_path = new_out
-                except Exception as e:
-                    print(f"Error download EP{ep_num}: {e}")
-                    success = False
-
-                if success:
-                    counts["success"] += 1
-                    session['downloaded'].append(output_path)
+            safe_title = "".join([c for c in title if c.isalnum() or c==' ']).strip()
+            ep_filename = f"{safe_title} Ep{ep_num}.mp4"
+            output_path = os.path.join(session['session_dir'], ep_filename)
+            
+            success = False
+            source = session['source']
+            
+            try:
+                # MENGUTAMAKAN YT-DLP UNTUK KESTABILAN
+                if source == "vigloo":
+                    cookies = ep.get('cookies', {})
+                    headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in cookies.items()])} if cookies else {}
+                    success = await downloader.download_video_ytdlp(url, output_path, headers)
                 else:
-                    counts["failed"] += 1
-                    session['failed_list'].append(f"EP{ep_num}")
+                    success = await downloader.download_video_ytdlp(url, output_path)
+                    
+                    # Aria2 hanya untuk file direct (bukan m3u8)
+                    if not success and USE_ARIA2 and ".m3u8" not in url: 
+                        success = await downloader.download_aria2(url, output_path)
+                        
+                    # ffmpeg sebagai last resort untuk m3u8
+                    if not success: 
+                        success = await downloader.download_video_ffmpeg(url, output_path)
+                
+                # Subtitle
+                sub_url = ep.get('subtitle')
+                if success and sub_url:
+                    sub_path = os.path.join(session['session_dir'], f"temp_sub_{ep_num}.srt")
+                    if await downloader.download_file(sub_url, sub_path):
+                        if session.get('sub_type') == 'hard':
+                            # Hardsub (Burn-in)
+                            new_out = await downloader.burn_subtitle(output_path, sub_path)
+                        else:
+                            # Softsub (Muxing)
+                            new_out = await downloader.mux_subtitle(output_path, sub_path, "mp4")
+                            
+                        if new_out:
+                            if os.path.exists(output_path): os.remove(output_path)
+                            if os.path.exists(sub_path): os.remove(sub_path)
+                            output_path = new_out
+            except Exception as e:
+                print(f"Error download EP{ep_num}: {e}")
+                success = False
 
-        async def update_status_loop():
-            while (counts["success"] + counts["failed"]) < total:
-                done = counts["success"] + counts["failed"]
-                text = (
-                    f"⬇️ <b>PROSES DOWNLOAD</b>\n"
-                    f"📦 <b>Drama:</b> {html.escape(title)}\n"
-                    f"📺 <b>Progress:</b> {done}/{total}\n"
-                    f"{make_progress_bar(done, total)}\n"
-                    f"✅ Selesai: {counts['success']} | ❌ Gagal: {counts['failed']}"
-                )
-                try:
-                    await event.edit(text, parse_mode='html')
-                except Exception: pass
-                await asyncio.sleep(4)
+            if success:
+                counts["success"] += 1
+                session['downloaded'].append(output_path)
+            else:
+                counts["failed"] += 1
+                session['failed_list'].append(f"EP{ep_num}")
 
-        sem = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
-        tasks = [download_task(idx, ep, sem) for idx, ep in enumerate(drama_info['episodes'])]
-        status_task = asyncio.create_task(update_status_loop())
-        await asyncio.gather(*tasks)
-        status_task.cancel()
+    async def update_status_loop():
+        while (counts["success"] + counts["failed"]) < total:
+            done = counts["success"] + counts["failed"]
+            text = (
+                f"⬇️ <b>PROSES DOWNLOAD</b>\n"
+                f"📦 <b>Drama:</b> {html.escape(title)}\n"
+                f"📺 <b>Progress:</b> {done}/{total}\n"
+                f"{make_progress_bar(done, total)}\n"
+                f"✅ Selesai: {counts['success']} | ❌ Gagal: {counts['failed']}"
+            )
+            try:
+                await event.edit(text, parse_mode='html')
+            except Exception: pass
+            await asyncio.sleep(4)
 
-        failed_text = f"\n⚠️ Gagal: {', '.join(session['failed_list'][:10])}" if session['failed_list'] else ""
-        final_text = (
-            f"⬇️ <b>DOWNLOAD SELESAI</b>\n"
-            f"📦 <b>Drama:</b> {html.escape(title)}\n"
-            f"✅ Berhasil: {counts['success']} | ❌ Gagal: {counts['failed']}{html.escape(failed_text)}\n"
-            f"\nPilih format upload:"
-        )
+    sem = asyncio.Semaphore(MAX_CONCURRENT_DOWNLOADS)
+    tasks = [download_task(idx, ep, sem) for idx, ep in enumerate(drama_info['episodes'])]
+    status_task = asyncio.create_task(update_status_loop())
+    await asyncio.gather(*tasks)
+    status_task.cancel()
 
-        buttons = [
-            [
-                Button.inline("📦 Upload MKV", data=f"up_mkv_{session_id}"),
-                Button.inline("🎬 Upload MP4", data=f"up_mp4_{session_id}")
-            ],
-            [Button.inline("❌ Batal Upload", data=f"cancel_{session_id}")]
-        ]
-        await event.edit(final_text, buttons=buttons, parse_mode='html')
+    failed_text = f"\n⚠️ Gagal: {', '.join(session['failed_list'][:10])}" if session['failed_list'] else ""
+    final_text = (
+        f"⬇️ <b>DOWNLOAD SELESAI</b>\n"
+        f"📦 <b>Drama:</b> {html.escape(title)}\n"
+        f"✅ Berhasil: {counts['success']} | ❌ Gagal: {counts['failed']}{html.escape(failed_text)}\n"
+        f"\nPilih format upload:"
+    )
+
+    buttons = [
+        [
+            Button.inline("📦 Upload MKV", data=f"up_mkv_{session_id}"),
+            Button.inline("🎬 Upload MP4", data=f"up_mp4_{session_id}")
+        ],
+        [Button.inline("❌ Batal Upload", data=f"cancel_{session_id}")]
+    ]
+    await event.edit(final_text, buttons=buttons, parse_mode='html')
 
     elif data.startswith("up_"):
         parts = data.split("_", 2)

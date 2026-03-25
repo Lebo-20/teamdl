@@ -173,11 +173,13 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         "--concurrent-fragments", "16",
         "--buffer-size", "1M",
         "--retries", "5",
+        "--external-downloader", "aria2c", 
+        "--external-downloader-args", "aria2c:-x 16 -s 16 -k 1M",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4"
     ]
     
-    # Tambahkan impersonate jika yt-dlp modern (opsional, coba matikan jika masih 403)
+    # Tambahkan impersonate jika yt-dlp modern (opsional)
     # cmd.extend(["--impersonate", "chrome"])
     
     if headers:
@@ -201,11 +203,39 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         print(f"yt-dlp async error: {e}")
         return False
 
+async def burn_subtitle(video_path: str, sub_path: str) -> Optional[str]:
+    """Hardsub subtitle ke video (Re-encoding) dengan gaya kustom."""
+    output_path = video_path.replace(".mp4", "_hardsub.mp4")
+    
+    # Style: FontName,FontSize,PrimaryColour,OutlineColour,Outline,Bold,MarginV
+    # Warna: &H00FFFFFF (Putih), &H00000000 (Hitam)
+    style = "FontName=Standard Symbols PS,FontSize=10,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=1,Bold=1,MarginV=90"
+    
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-vf", f"subtitles='{sub_path}':force_style='{style}'",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+        "-c:a", "copy",
+        output_path
+    ]
+    
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        await process.communicate()
+        return output_path if process.returncode == 0 else None
+    except Exception as e:
+        print(f"Hardsub Error: {e}")
+        return None
+
 async def mux_subtitle(video_path: str, sub_path: str, output_ext: str) -> str:
     """Mux subtitle softsub ke video (Async)."""
     output_path = video_path.replace(".mp4", f"_subbed.{output_ext}")
     
-    # Dasar perintah
+    # Dasar perintah 
     cmd = ["ffmpeg", "-y", "-threads", "0", "-i", video_path, "-i", sub_path]
     
     if output_ext == "mkv":
