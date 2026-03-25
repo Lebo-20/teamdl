@@ -139,7 +139,33 @@ async def handle_document(event):
 
 @client.on(events.NewMessage(func=lambda e: e.document and e.document.mime_type != 'application/json'))
 async def handle_any_file_hint(event):
-    await event.respond("👆 <b>Balas (reply)</b> ke pesan file ini dengan nama baru untuk mengganti nama dan mengirim ulang sebagai media.", parse_mode='html')
+    user_id = event.sender_id
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        return
+        
+    session_id = f"merge_{user_id}"
+    if session_id not in user_sessions:
+        user_sessions[session_id] = {"files": [], "session_dir": os.path.join(TEMP_DIR, session_id)}
+        os.makedirs(user_sessions[session_id]["session_dir"], exist_ok=True)
+    
+    # Simpan info file (untuk didownload nanti saat merge diklik)
+    # Kita tidak mendownload sekarang agar hemat storage jika user hanya ingin rename
+    user_sessions[session_id]["files"].append(event.message.id)
+    
+    count = len(user_sessions[session_id]["files"])
+    text = (
+        "👆 <b>Balas (reply)</b> ke pesan file ini dengan nama baru untuk mengganti nama.\n\n"
+        f"📦 Terdeteksi {count} file dalam antrean merge."
+    )
+    
+    buttons = None
+    if count >= 2:
+        buttons = [
+            [Button.inline(f"🎬 Gabungkan {count} Video", data=f"do_merge_{user_id}")],
+            [Button.inline("❌ Bersihkan Antrean", data=f"clear_merge_{user_id}")]
+        ]
+        
+    await event.respond(text, buttons=buttons, parse_mode='html')
 
 @client.on(events.NewMessage(func=lambda e: not e.text.startswith('/') and e.is_reply))
 async def handle_rename_reply(event):
@@ -323,7 +349,81 @@ async def handle_callback(event):
     user_id = event.sender_id
     data = event.data.decode('utf-8')
     
-    if data.startswith("cancel_"):
+    if data.startswith("do_merge_"):
+        user_id = data.split("do_merge_")[1]
+        session_id = f"merge_{user_id}"
+        session = user_sessions.get(session_id)
+        if not session or not session["files"]:
+            await event.answer("⚠️ Antrean kosong.", alert=True)
+            return
+
+        msg = await event.edit("⏳ <b>Memulai proses penggabungan...</b>\nMendownload semua file dalam antrean.", parse_mode='html')
+        
+        file_paths = []
+        try:
+            for idx, msg_id in enumerate(session["files"]):
+                # Ambil pesan asli
+                target_msg = await client.get_messages(event.chat_id, ids=msg_id)
+                if not target_msg or not target_msg.document: continue
+                
+                filename = target_msg.file.name or f"part_{idx}.mp4"
+                path = os.path.join(session["session_dir"], f"{idx}_{filename}")
+                
+                await msg.edit(f"📥 <b>Downloading part {idx+1}/{len(session['files'])}...</b>", parse_mode='html')
+                await target_msg.download_media(file=path)
+                file_paths.append(path)
+
+            if len(file_paths) < 2:
+                await msg.edit("❌ Minimal butuh 2 file valid untuk digabungkan.")
+                return
+
+            output_name = "Merged_Video.mp4"
+            output_path = os.path.join(session["session_dir"], output_name)
+            
+            await msg.edit("⚙️ <b>Sedang menggabungkan (lossless)...</b>", parse_mode='html')
+            success = await downloader.merge_videos(file_paths, output_path)
+            
+            if success:
+                # Berikan instruksi rename untuk hasil merge
+                # Kita kirim dulu tapi kasih tau bisa di-rename dengan reply
+                await msg.delete()
+                
+                # Ekstrak info
+                thumb_path = os.path.join(session["session_dir"], "thumb.jpg")
+                has_thumb = await downloader.extract_thumbnail(output_path, thumb_path)
+                v_info = await downloader.get_video_info(output_path)
+                
+                final_msg = await client.send_file(
+                    event.chat_id,
+                    output_path,
+                    caption=f"✅ <b>Berhasil Menggabungkan {len(file_paths)} File!</b>\n\n📁 Nama: <code>{output_name}</code>\n\n👆 <b>Balas (reply)</b> ke pesan ini dengan nama baru jika ingin mengubah namanya.",
+                    thumb=thumb_path if has_thumb else None,
+                    attributes=[DocumentAttributeVideo(
+                        duration=v_info["duration"],
+                        w=v_info["width"],
+                        h=v_info["height"],
+                        supports_streaming=True
+                    )],
+                    supports_streaming=True,
+                    parse_mode='html'
+                )
+                # Sesi merge selesai
+                user_sessions.pop(session_id, None)
+                shutil.rmtree(session["session_dir"], ignore_errors=True)
+            else:
+                await msg.edit("❌ Gagal menggabungkan video.")
+        except Exception as e:
+            await msg.edit(f"❌ Error saat merge: {e}")
+            
+    elif data.startswith("clear_merge_"):
+        user_id = data.split("clear_merge_")[1]
+        session_id = f"merge_{user_id}"
+        session = user_sessions.pop(session_id, None)
+        if session:
+            shutil.rmtree(session["session_dir"], ignore_errors=True)
+        await event.edit("✅ Antrean merge telah dibersihkan.")
+
+    elif data.startswith("cancel_"):
         session_id = data.split("cancel_")[1]
         session = user_sessions.pop(session_id, None)
         if session:

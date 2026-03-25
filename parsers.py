@@ -4,13 +4,15 @@ from typing import Any, Dict, List, Optional
 def detect_source(data: Any) -> str:
     """Deteksi platform dari struktur JSON."""
     if isinstance(data, list):
-        if len(data) > 0 and isinstance(data[0], dict) and "cdnList" in data[0]:
+        if len(data) > 0 and isinstance(data[0], dict) and ("cdnList" in data[0] or "chapterId" in data[0]):
             return "draamabox_list"
         return "unknown"
         
     if not isinstance(data, dict):
         return "unknown"
         
+    if "cdnList" in data and "chapterId" in data:
+        return "draamabox_list"
     if "squa" in data and "dgiv" in data:
         return "dotdrama"
     if "success" in data and "bookId" in data.get("data", {}):
@@ -126,9 +128,10 @@ def _get_indonesian_sub(subtitle_list: list, source: str) -> Optional[str]:
         for sub in subtitle_list:
             if sub.get("language") in ["id-ID", "id", "ind"]:
                 return sub.get("subtitle") or sub.get("vtt")
-    elif source == "meloshort":
+    elif source == "meloshort" or source == "dramabox":
         for sub in subtitle_list:
-            if sub.get("languageId") == 23 or sub.get("language") == "ind-ID":
+            # meloshort uses languageId, dramabox uses captionLanguage
+            if sub.get("languageId") == 23 or sub.get("language") == "ind-ID" or sub.get("captionLanguage") in ["in", "id", "ind"]:
                 return sub.get("url")
     return None
 
@@ -185,8 +188,6 @@ def get_flikreels_url(episode: dict) -> str:
             origin_path = '/' + origin_path
             
         return f"{base_domain}{origin_path}?verify={verify_token}"
-        
-    return hls_url
         
     return hls_url
 
@@ -426,13 +427,16 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
     elif source_type == "shorttv":
         return parse_shorttv(data)
     elif source_type == "draamabox_list":
-        return parse_draamabox_list(data, filename) # type: ignore
+        return parse_draamabox_list(data, filename)
     else:
         raise ValueError(f"Unknown source type: {source_type}")
 
-def parse_draamabox_list(data: List[Any], filename: str = "") -> dict:
+def parse_draamabox_list(data: Any, filename: str = "") -> dict:
+    # Normalisasi data ke list agar konsisten (bisa terima 1 objek atau list)
+    data_list = [data] if isinstance(data, dict) else data
+    
     episodes = []
-    for item in data:
+    for item in data_list:
         cdn_list = item.get("cdnList", [])
         # Cari CDN default atau yang pertama
         v_list = []
@@ -453,16 +457,19 @@ def parse_draamabox_list(data: List[Any], filename: str = "") -> dict:
         if not url and v_list:
             url = v_list[0].get("videoPath")
             
+        sub_list = item.get("subLanguageVoList", [])
+        sub_url = _get_indonesian_sub(sub_list, "dramabox")
+            
         episodes.append({
             "num": item.get("chapterIndex", 0) + 1,
             "name": item.get("chapterName", f"EP {item.get('chapterIndex', 0) + 1}"),
             "url": url,
             "is_lock": 1 if item.get("isCharge") else 0,
-            "subtitle": None
+            "subtitle": sub_url
         })
         
     title = filename.replace(".json", "") if filename else "Dramabox Series"
-    cover = data[0].get("chapterImg", "") if data else ""
+    cover = data_list[0].get("chapterImg", "") if data_list else ""
     
     return {
         "title": title,
