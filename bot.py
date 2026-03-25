@@ -5,6 +5,8 @@ import html
 import sys
 import subprocess
 import shutil
+import urllib.parse
+import re
 from typing import Any
 
 # Telethon Imports
@@ -133,6 +135,100 @@ async def handle_document(event):
         await event.respond(f"❌ Error: {str(e)}")
     finally:
         if os.path.exists(file_path): os.remove(file_path)
+
+@client.on(events.NewMessage(pattern=r'^/l(\s+|$)'))
+async def handle_link_command(event):
+    user_id = event.sender_id
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        return
+        
+    text = event.message.text
+    # Extract links from the message
+    links = re.findall(r'https?://[^\s\n]+', text)
+    
+    if not links:
+        await event.respond("❌ Mohon sertakan link video (m3u8/mp4).")
+        return
+
+    # Limit to 100 links
+    if len(links) > 100:
+        await event.respond(f"⚠️ Terlalu banyak link. Maksimal 100 link per perintah. Hanya 100 link pertama yang akan diproses.")
+        links = links[:100]
+
+    total = len(links)
+    summary_msg = await event.respond(f"🚀 Memulai download {total} link...")
+    
+    success_count = 0
+    fail_count = 0
+    
+    # Process each link (supporting multiple links per command)
+    for idx, url in enumerate(links):
+        current = idx + 1
+        try:
+            await summary_msg.edit(
+                f"📥 <b>PROSES LINK {current}/{total}</b>\n"
+                f"🔗 <code>{html.escape(url)}</code>\n\n"
+                f"✅ Berhasil: {success_count} | ❌ Gagal: {fail_count}\n"
+                f"{make_progress_bar(current, total)}",
+                parse_mode='html'
+            )
+        except Exception: pass
+        
+        # Unique session dir for each link
+        batch_session_id = f"{user_id}_{event.id}_{idx}"
+        session_dir = os.path.join(TEMP_DIR, batch_session_id)
+        os.makedirs(session_dir, exist_ok=True)
+        
+        # Simple filename extraction
+        parsed_url = urllib.parse.urlparse(url)
+        path = parsed_url.path
+        filename_orig = os.path.basename(path)
+        
+        if not filename_orig or '.' not in filename_orig or len(filename_orig) < 4:
+            filename = f"video_{current}.mp4"
+        else:
+            # Tetap gunakan nama asli tapi pastikan extension mp4 dan amankan dari tabrakan
+            name_part = filename_orig.rsplit('.', 1)[0]
+            filename = f"{name_part}_{current}.mp4"
+            
+        output_path = os.path.join(session_dir, filename)
+        
+        try:
+            # Download logic
+            success = await downloader.download_video_ytdlp(url, output_path)
+            if not success:
+                success = await downloader.download_video_ffmpeg(url, output_path)
+                
+            if success and os.path.exists(output_path):
+                # Upload
+                await client.send_file(
+                    event.chat_id,
+                    output_path,
+                    caption=f"📺 Video ({current}/{total}):\n<code>{html.escape(url)}</code>",
+                    force_document=True,
+                    supports_streaming=True,
+                    reply_to=event.id,
+                    parse_mode='html'
+                )
+                success_count += 1
+            else:
+                fail_count += 1
+        except Exception as e:
+            print(f"Error download link {url}: {e}")
+            fail_count += 1
+        finally:
+            shutil.rmtree(session_dir, ignore_errors=True)
+            
+    # Final report
+    final_text = (
+        f"✅ <b>DOWNLOAD SELESAI</b>\n"
+        f"──────────────────────────\n"
+        f"📋 <b>Total Link</b>  : {total}\n"
+        f"✅ <b>Berhasil</b>    : {success_count}\n"
+        f"❌ <b>Gagal</b>       : {fail_count}\n"
+        f"──────────────────────────"
+    )
+    await summary_msg.edit(final_text, parse_mode='html')
 
 @client.on(events.CallbackQuery)
 async def handle_callback(event):

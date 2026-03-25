@@ -12,6 +12,7 @@ async def download_file(url: str, output_path: str, headers: Optional[Dict[str, 
     if "mydramawave.com" in url: referer = "https://www.mydramawave.com/"
     elif "vividshort.com" in url: referer = "https://vividshort.com/"
     elif "farsunpteltd.com" in url: referer = "https://pages.farsunpteltd.com/"
+    elif "shorttv.live" in url: referer = "https://shorttv.live/"
     
     parsed = urllib.parse.urlparse(referer)
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -100,6 +101,7 @@ async def download_video_ffmpeg(m3u8_url: str, output_path: str, headers: dict |
     if "mydramawave.com" in m3u8_url: referer = "https://www.mydramawave.com/"
     elif "vividshort.com" in m3u8_url: referer = "https://vividshort.com/"
     elif "farsunpteltd.com" in m3u8_url: referer = "https://pages.farsunpteltd.com/"
+    elif "shorttv.live" in m3u8_url: referer = "https://shorttv.live/"
     
     cmd = ["ffmpeg", "-y"]
     
@@ -154,6 +156,8 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         referer = "https://www.dramabox.com/"
     elif "vividshort.com" in url:
         referer = "https://www.vividshort.com/"
+    elif "shorttv.live" in url:
+        referer = "https://www.shorttv.live/"
         
     # Gunakan User-Agent Mobile agar lebih lancar
     ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
