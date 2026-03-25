@@ -37,6 +37,8 @@ def detect_source(data: Any) -> str:
         return "dramaflickreels"
     if "videoInfo" in data and "episodesInfo" in data:
         return "velolo"
+    if "shortPlayId" in data and "shortPlayName" in data:
+        return "shorttv"
     return "unknown"
 
 def parse_dotdrama(data: Any) -> dict:
@@ -421,6 +423,8 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_dramaflickreels(data)
     elif source_type == "velolo":
         return parse_velolo(data)
+    elif source_type == "shorttv":
+        return parse_shorttv(data)
     elif source_type == "draamabox_list":
         return parse_draamabox_list(data, filename) # type: ignore
     else:
@@ -465,5 +469,28 @@ def parse_draamabox_list(data: List[Any], filename: str = "") -> dict:
         "sinopsis": "",
         "cover": cover,
         "total_ep": len(episodes),
+        "episodes": sorted(episodes, key=lambda x: x["num"])
+    }
+
+def parse_shorttv(data: dict) -> dict:
+    episodes_raw = data.get("episodes", [])
+    episodes = []
+    
+    for item in episodes_raw:
+        urls = item.get("videoUrl", {})
+        # Quality priority: 1080p -> 720p -> 480p
+        url = urls.get("video_1080") or urls.get("video_720") or urls.get("video_480")
+        
+        episodes.append({
+            "num": item.get("episodeNumber", 0),
+            "url": url,
+            "subtitle": None
+        })
+        
+    return {
+        "title": data.get("shortPlayName", "Unknown ShortTV"),
+        "sinopsis": "",
+        "cover": episodes_raw[0].get("cover", "") if episodes_raw else "",
+        "total_ep": data.get("totalEpisodes", len(episodes)),
         "episodes": sorted(episodes, key=lambda x: x["num"])
     }

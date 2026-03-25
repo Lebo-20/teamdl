@@ -277,3 +277,34 @@ async def mux_subtitle(video_path: str, sub_path: str, output_ext: str) -> str:
     except Exception as e:
         print(f"Mux async error: {e}")
         return ""
+
+async def merge_videos(video_list: list[str], output_path: str) -> bool:
+    """Gabungkan daftar video menjadi satu file menggunakan FFmpeg concat demuxer."""
+    if not video_list: return False
+    
+    # Buat file list untuk concat
+    list_path = output_path.replace(".mp4", "_list.txt")
+    with open(list_path, "w", encoding="utf-8") as f:
+        for v in video_list:
+            # escaping path for ffmpeg concat list
+            abs_v = os.path.abspath(v).replace("\\", "/")
+            f.write(f"file '{abs_v}'\n")
+            
+    cmd = [
+        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+        "-i", list_path, "-c", "copy", output_path
+    ]
+    
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        await process.communicate()
+        if os.path.exists(list_path): os.remove(list_path)
+        return process.returncode == 0 and os.path.exists(output_path)
+    except Exception as e:
+        print(f"Merge Error: {e}")
+        if os.path.exists(list_path): os.remove(list_path)
+        return False

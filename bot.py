@@ -261,6 +261,51 @@ async def handle_callback(event):
         session_id = data.split("dl_")[1]
         await handle_callback_download(event, session_id)
 
+    elif data.startswith("merge_"):
+        session_id = data.split("merge_")[1]
+        session = user_sessions.get(session_id)
+        if not session:
+            await event.edit("⚠️ Sesi habis.")
+            return
+            
+        files = session['downloaded']
+        if not files:
+            await event.edit("⚠️ Tidak ada file untuk digabungkan.")
+            return
+            
+        await event.edit("⏳ <b>Sedang menggabungkan semua episode...</b>\nMohon tunggu, ini mungkin memakan waktu.", parse_mode='html')
+        
+        # Natural Sort
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+        files.sort(key=natural_sort_key)
+        
+        title = session['drama_info']['title']
+        output_name = f"{title}_Full_Movie.mp4"
+        output_path = os.path.join(session['session_dir'], output_name)
+        
+        success = await downloader.merge_videos(files, output_path)
+        if success:
+            await event.edit(f"⬆️ <b>Berhasil menggabungkan!</b>\nUploading: <code>{output_name}</code>", parse_mode='html')
+            try:
+                await client.send_file(
+                    event.chat_id,
+                    output_path,
+                    caption=f"🎬 <b>{html.escape(title)}</b>\nFull Episodes Merged ✅",
+                    parse_mode='html',
+                    force_document=True,
+                    supports_streaming=True
+                )
+                # Cleanup setelah berhasil kirim full movie
+                user_sessions.pop(session_id, None)
+                shutil.rmtree(session['session_dir'], ignore_errors=True)
+                await event.respond("✅ Proses penggabungan dan pengiriman selesai!")
+            except Exception as e:
+                await event.respond(f"❌ Gagal mengirim file gabungan: {e}")
+        else:
+            await event.edit("❌ Gagal menggabungkan video. Pastikan semua episode terdownload dengan benar.")
+
     elif data.startswith("up_"):
         parts = data.split("_", 2)
         target_format = parts[1].upper()
@@ -465,6 +510,7 @@ async def handle_callback_download(event, session_id):
             Button.inline("📦 Upload MKV", data=f"up_mkv_{session_id}"),
             Button.inline("🎬 Upload MP4", data=f"up_mp4_{session_id}")
         ],
+        [Button.inline("🎞️ Gabungkan Semua (Beta)", data=f"merge_{session_id}")],
         [Button.inline("❌ Batal Upload", data=f"cancel_{session_id}")]
     ]
     await event.edit(final_text, buttons=buttons, parse_mode='html')
