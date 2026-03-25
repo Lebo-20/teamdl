@@ -204,18 +204,26 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         return False
 
 async def burn_subtitle(video_path: str, sub_path: str) -> Optional[str]:
-    """Hardsub subtitle ke video (Re-encoding) dengan gaya kustom."""
+    """Hardsub subtitle ke video (Re-encoding) dengan efisiensi tinggi (720p)."""
     output_path = video_path.replace(".mp4", "_hardsub.mp4")
     
     # Style: FontName,FontSize,PrimaryColour,OutlineColour,Outline,Bold,MarginV
     # Warna: &H00FFFFFF (Putih), &H00000000 (Hitam)
     style = "FontName=Standard Symbols PS,FontSize=10,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=1,Bold=1,MarginV=90"
     
+    # Filter subtitles + scaling 720p
+    # Gunakan subtitles filter dengan auto-detection format (srt/ass/vtt)
+    # Catatan: Path subtitle harus di-escape jika mengandung karakter aneh
+    filter_complex = f"subtitles='{sub_path}':force_style='{style}',scale=1280:720"
+    
     cmd = [
         "ffmpeg", "-y", "-i", video_path,
-        "-vf", f"subtitles='{sub_path}':force_style='{style}'",
-        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
-        "-c:a", "copy",
+        "-vf", filter_complex,
+        "-c:v", "libx264", 
+        "-preset", "veryfast", # Kecepatan tinggi (veryfast)
+        "-crf", "23",          # Kualitas seimbang (crf 23)
+        "-c:a", "aac", 
+        "-b:a", "128k",        # Audio efisien (128k)
         output_path
     ]
     
