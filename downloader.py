@@ -175,7 +175,7 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         "--retries", "5",
         "--external-downloader", "aria2c", 
         "--external-downloader-args", "aria2c:-x 16 -s 16 -k 1M",
-        "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "-f", "bestvideo+bestaudio/best",
         "--merge-output-format", "mp4"
     ]
     
