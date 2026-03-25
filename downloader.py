@@ -148,18 +148,29 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
     elif "vividshort.com" in url: referer = "https://vividshort.com/"
     elif "farsunpteltd.com" in url: referer = "https://pages.farsunpteltd.com/"
     
-    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     
+    # Deteksi Origin
+    parsed_url = urllib.parse.urlparse(url)
+    origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
     cmd = [
         "yt-dlp", "--no-warnings", "-q", 
         "--user-agent", ua, 
         "--referer", referer,
+        "--add-header", f"Origin: {origin}",
+        "--no-check-certificate",
+        "--ignore-config",
         "--no-playlist",
         "--concurrent-fragments", "16",
         "--buffer-size", "1M",
+        "--retries", "3",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4"
     ]
+    
+    # Tambahkan impersonate jika yt-dlp modern (meniru sidik jari browser Chrome)
+    cmd.extend(["--impersonate", "chrome"])
     
     if headers:
         for k, v in headers.items():
