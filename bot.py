@@ -165,6 +165,105 @@ async def handle_callback(event):
         session_id = data.split("dl_")[1]
         await handle_callback_download(event, session_id)
 
+    elif data.startswith("up_"):
+        parts = data.split("_", 2)
+        target_format = parts[1].upper()
+        session_id = parts[2]
+        session = user_sessions.get(session_id)
+        if not session: return
+
+        session['format'] = target_format
+        files = session['downloaded']
+        if not files:
+            await event.edit("⚠️ Tidak ada file untuk diupload.")
+            return
+        # Natural Sort agar urutan upload pas (Ep1, Ep2, dst... bukan Ep1, Ep10, Ep2)
+        import re
+        def natural_sort_key(s):
+            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+        
+        files.sort(key=natural_sort_key)
+
+        uploaded = 0
+        failed_up = 0
+        title = session['drama_info']['title']
+
+        for idx, filepath in enumerate(files):
+            current = idx + 1
+            text = (
+                f"⬆️ <b>PROSES UPLOAD</b>\n"
+                f"📦 <b>Drama:</b> {html.escape(title)}\n"
+                f"📺 <b>Upload:</b> {current}/{len(files)}\n"
+                f"{make_progress_bar(current, len(files))}\n"
+                f"✅ Berhasil: {uploaded} | ❌ Gagal: {failed_up}"
+            )
+            try:
+                await event.edit(text, parse_mode='html')
+            except Exception: pass
+
+            upload_path = filepath
+            if not filepath.endswith(f".{target_format}"):
+                converted = filepath.rsplit('.', 1)[0] + f".{target_format}"
+                if os.path.exists(converted): os.remove(converted)
+                try:
+                    # Pastikan menyalin semua stream (video, audio, subtitle) dengan -map 0
+                    # Gunakan codec subtitle yang tepat sesuai format target
+                    sub_codec = "srt" if target_format == "MKV" else "mov_text"
+                    cmd = ["ffmpeg", "-y", "-i", filepath, "-map", "0", "-c", "copy", "-c:s", sub_codec, converted]
+                    subprocess.run(cmd, check=True, capture_output=True)
+                    upload_path = converted
+                except Exception as e:
+                    print(f"FFmpeg Convert Error: {e}")
+                    # Jika gagal (mungkin stream tidak kompatibel), coba copy biasa tanpa -map 0
+                    try:
+                        subprocess.run(["ffmpeg", "-y", "-i", filepath, "-c", "copy", converted], 
+                                     check=True, capture_output=True)
+                        upload_path = converted
+                    except: pass
+
+            try:
+                if not os.path.exists(upload_path):
+                    raise FileNotFoundError(f"File not found: {upload_path}")
+
+                # Telethon upload 
+                await client.send_file(
+                    event.chat_id,
+                    upload_path,
+                    caption=f"📺 {html.escape(title)} - Episode {current}",
+                    parse_mode='html',
+                    force_document=True,
+                    supports_streaming=True
+                )
+                uploaded += 1
+            except Exception as e:
+                print(f"Upload Failure: {str(e)}")
+                failed_up += 1
+            finally:
+                if os.path.exists(upload_path): os.remove(upload_path)
+                if upload_path != filepath and os.path.exists(filepath): os.remove(filepath)
+            
+            await asyncio.sleep(2)
+
+        # FINAL REPORT CANTIK
+        drama_info = session['drama_info']
+        sinopsis = drama_info.get('sinopsis', 'Tidak ada sinopsis.')
+        report = (
+            f"✅ <b>PROSES SELESAI!</b>\n"
+            f"──────────────────────────\n"
+            f"📦 <b>Drama:</b> {html.escape(title)}\n"
+            f"🎬 <b>Format:</b> {session['format']}\n"
+            f"📖 <b>Sinopsis:</b>\n<i>{html.escape(sinopsis)}</i>\n"
+            f"──────────────────────────\n"
+            f"⬆️ <b>Total File</b>    : {len(files)}\n"
+            f"✅ <b>Berhasil</b>      : {uploaded}\n"
+            f"❌ <b>Gagal Upload</b>  : {failed_up}\n"
+            f"──────────────────────────\n"
+            f"🥳 Semua proses telah selesai! 🎉"
+        )
+        await event.respond(report, parse_mode='html')
+        user_sessions.pop(session_id, None)
+        shutil.rmtree(session['session_dir'], ignore_errors=True)
+
 async def handle_callback_download(event, session_id):
     session = user_sessions.get(session_id)
     if not session: return
@@ -274,104 +373,7 @@ async def handle_callback_download(event, session_id):
     ]
     await event.edit(final_text, buttons=buttons, parse_mode='html')
 
-    elif data.startswith("up_"):
-        parts = data.split("_", 2)
-        target_format = parts[1].upper()
-        session_id = parts[2]
-        session = user_sessions.get(session_id)
-        if not session: return
 
-        session['format'] = target_format
-        files = session['downloaded']
-        if not files:
-            await event.edit("⚠️ Tidak ada file untuk diupload.")
-            return
-        # Natural Sort agar urutan upload pas (Ep1, Ep2, dst... bukan Ep1, Ep10, Ep2)
-        import re
-        def natural_sort_key(s):
-            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
-        
-        files.sort(key=natural_sort_key)
-
-        uploaded = 0
-        failed_up = 0
-        title = session['drama_info']['title']
-
-        for idx, filepath in enumerate(files):
-            current = idx + 1
-            text = (
-                f"⬆️ <b>PROSES UPLOAD</b>\n"
-                f"📦 <b>Drama:</b> {html.escape(title)}\n"
-                f"📺 <b>Upload:</b> {current}/{len(files)}\n"
-                f"{make_progress_bar(current, len(files))}\n"
-                f"✅ Berhasil: {uploaded} | ❌ Gagal: {failed_up}"
-            )
-            try:
-                await event.edit(text, parse_mode='html')
-            except Exception: pass
-
-            upload_path = filepath
-            if not filepath.endswith(f".{target_format}"):
-                converted = filepath.rsplit('.', 1)[0] + f".{target_format}"
-                if os.path.exists(converted): os.remove(converted)
-                try:
-                    # Pastikan menyalin semua stream (video, audio, subtitle) dengan -map 0
-                    # Gunakan codec subtitle yang tepat sesuai format target
-                    sub_codec = "srt" if target_format == "MKV" else "mov_text"
-                    cmd = ["ffmpeg", "-y", "-i", filepath, "-map", "0", "-c", "copy", "-c:s", sub_codec, converted]
-                    subprocess.run(cmd, check=True, capture_output=True)
-                    upload_path = converted
-                except Exception as e:
-                    print(f"FFmpeg Convert Error: {e}")
-                    # Jika gagal (mungkin stream tidak kompatibel), coba copy biasa tanpa -map 0
-                    try:
-                        subprocess.run(["ffmpeg", "-y", "-i", filepath, "-c", "copy", converted], 
-                                     check=True, capture_output=True)
-                        upload_path = converted
-                    except: pass
-
-            try:
-                if not os.path.exists(upload_path):
-                    raise FileNotFoundError(f"File not found: {upload_path}")
-
-                # Telethon upload 
-                await client.send_file(
-                    event.chat_id,
-                    upload_path,
-                    caption=f"📺 {html.escape(title)} - Episode {current}",
-                    parse_mode='html',
-                    force_document=True,
-                    supports_streaming=True
-                )
-                uploaded += 1
-            except Exception as e:
-                print(f"Upload Failure: {str(e)}")
-                failed_up += 1
-            finally:
-                if os.path.exists(upload_path): os.remove(upload_path)
-                if upload_path != filepath and os.path.exists(filepath): os.remove(filepath)
-            
-            await asyncio.sleep(2)
-
-        # FINAL REPORT CANTIK
-        drama_info = session['drama_info']
-        sinopsis = drama_info.get('sinopsis', 'Tidak ada sinopsis.')
-        report = (
-            f"✅ <b>PROSES SELESAI!</b>\n"
-            f"──────────────────────────\n"
-            f"📦 <b>Drama:</b> {html.escape(title)}\n"
-            f"🎬 <b>Format:</b> {session['format']}\n"
-            f"📖 <b>Sinopsis:</b>\n<i>{html.escape(sinopsis)}</i>\n"
-            f"──────────────────────────\n"
-            f"⬆️ <b>Total File</b>    : {len(files)}\n"
-            f"✅ <b>Berhasil</b>      : {uploaded}\n"
-            f"❌ <b>Gagal Upload</b>  : {failed_up}\n"
-            f"──────────────────────────\n"
-            f"🥳 Semua proses telah selesai! 🎉"
-        )
-        await event.respond(report, parse_mode='html')
-        user_sessions.pop(session_id, None)
-        shutil.rmtree(session['session_dir'], ignore_errors=True)
 
 @client.on(events.NewMessage(pattern='/id'))
 async def get_id(event):
