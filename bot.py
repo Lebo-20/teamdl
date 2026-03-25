@@ -136,82 +136,84 @@ async def handle_document(event):
     finally:
         if os.path.exists(file_path): os.remove(file_path)
 
-@client.on(events.NewMessage(func=lambda e: e.document and e.document.mime_type != 'application/json'))
-async def handle_any_file(event):
+@client.on(events.NewMessage(func=lambda e: not e.text.startswith('/') and e.is_reply))
+async def handle_rename_reply(event):
     user_id = event.sender_id
     if ALLOWED_USERS and user_id not in ALLOWED_USERS:
         return
         
-    filename = event.file.name or "file"
-    session_id = f"rename_{user_id}"
+    reply_msg = await event.get_reply_message()
+    if not reply_msg or not reply_msg.document or reply_msg.document.mime_type == 'application/json':
+        return # Hanya proses reply ke file (bukan JSON)
+
+    new_name = event.text.strip()
+    # Amankan nama file (izinkan spasi, titik, dash, underscore)
+    new_name = "".join([c for c in new_name if c.isalnum() or c in " ._- ()"]).strip()
+    if not new_name:
+        return
+
+    orig_filename = reply_msg.file.name or "file"
+    # Jika tidak ada ekstensi, gunakan ekstensi asli
+    if '.' not in new_name:
+        ext = orig_filename.rsplit('.', 1)[-1] if '.' in orig_filename else "mp4"
+        new_name += f".{ext}"
+        
+    session_id = f"rename_{user_id}_{event.id}"
     session_dir = os.path.join(TEMP_DIR, session_id)
     os.makedirs(session_dir, exist_ok=True)
     
-    file_path = os.path.join(session_dir, filename)
-    msg = await event.respond("📥 Sedang mendownload file untuk direname...")
-    await event.download_media(file=file_path)
+    msg = await event.respond(f"⏳ <b>Memproses Rename:</b> <code>{html.escape(new_name)}</code>...", parse_mode='html')
     
-    user_sessions[session_id] = {
-        "file_path": file_path,
-        "original_name": filename,
-        "chat_id": event.chat_id,
-        "reply_to": event.id,
-        "state": "awaiting_name"
-    }
-    
-    await msg.edit(f"✅ Download selesai.\nSilakan balas (reply) pesan ini dengan <b>Nama Baru</b> (termasuk .ekstensi jika ingin ganti).", parse_mode='html')
-
-@client.on(events.NewMessage(func=lambda e: not e.text.startswith('/') and not e.document))
-async def handle_text_reply(event):
-    user_id = event.sender_id
-    session_id = f"rename_{user_id}"
-    session = user_sessions.get(session_id)
-    
-    if not session or session.get("state") != "awaiting_name":
-        return
-        
-    new_name = event.text.strip()
-    file_path = session["file_path"]
-    session_dir = os.path.dirname(file_path)
-    
-    # Amankan nama file
-    new_name = "".join([c for c in new_name if c.isalnum() or c in " ._- ()"]).strip()
-    if not new_name:
-        await event.respond("❌ Nama tidak valid.")
-        return
-        
-    # Jika tidak ada ekstensi, gunakan ekstensi asli
-    if '.' not in new_name:
-        ext = session["original_name"].rsplit('.', 1)[-1]
-        new_name += f".{ext}"
-        
-    new_path = os.path.join(session_dir, new_name)
-    os.rename(file_path, new_path)
-    
-    msg = await event.respond(f"⏳ Mengirim ulang sebagai media: <code>{html.escape(new_name)}</code>...", parse_mode='html')
+    file_path = os.path.join(session_dir, orig_filename)
     
     try:
-        # Ekstrak thumbnail jika video
+        # Download Progress
+        async def dl_progress(current, total):
+            pct = (current / total) * 100
+            if int(pct) % 15 == 0 or current == total:
+                try:
+                    await msg.edit(f"📥 <b>Downloading...</b>\n{make_progress_bar(current, total)}\n"
+                                  f"📦 <code>{html.escape(orig_filename)}</code>", parse_mode='html')
+                except Exception: pass
+        
+        await reply_msg.download_media(file=file_path, progress_callback=dl_progress)
+        
+        new_path = os.path.join(session_dir, new_name)
+        os.rename(file_path, new_path)
+        
+        # Ekstrak thumbnail & info video
         thumb_path = os.path.join(session_dir, "thumb.jpg")
         has_thumb = await downloader.extract_thumbnail(new_path, thumb_path)
+        v_info = await downloader.get_video_info(new_path)
         
+        # Progress Bar untuk Upload
+        async def up_progress(current, total):
+            pct = (current / total) * 100
+            if int(pct) % 15 == 0 or current == total:
+                try:
+                    await msg.edit(f"📤 <b>Uploading...</b>\n{make_progress_bar(current, total)}\n"
+                                  f"📁 <code>{html.escape(new_name)}</code>", parse_mode='html')
+                except Exception: pass
+
         await client.send_file(
             event.chat_id,
             new_path,
             caption=f"📁 <b>{html.escape(new_name)}</b>",
             thumb=thumb_path if has_thumb else None,
+            duration=v_info["duration"],
+            width=v_info["width"],
+            height=v_info["height"],
             supports_streaming=True,
-            force_document=False, # Agar jadi media (video/audio/img) jika didukung
+            force_document=False,
             parse_mode='html',
-            reply_to=session["reply_to"]
+            reply_to=reply_msg.id,
+            progress_callback=up_progress
         )
         
         await msg.delete()
-        if has_thumb and os.path.exists(thumb_path): os.remove(thumb_path)
     except Exception as e:
-        await msg.edit(f"❌ Gagal mengirim: {str(e)}")
+        await msg.edit(f"❌ Gagal: {str(e)}")
     finally:
-        user_sessions.pop(session_id, None)
         shutil.rmtree(session_dir, ignore_errors=True)
 
 @client.on(events.NewMessage(pattern=r'^/l(\s+|$)'))

@@ -328,3 +328,44 @@ async def extract_thumbnail(video_path: str, thumb_path: str) -> bool:
         return process.returncode == 0 and os.path.exists(thumb_path)
     except Exception:
         return False
+
+async def get_video_info(video_path: str) -> dict:
+    """Ambil informasi durasi, lebar, dan tinggi video menggunakan ffprobe."""
+    import json
+    cmd = [
+        "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=width,height",
+        "-of", "json", "video_path"
+    ]
+    # Oops, mistake in command above, fixing it
+    cmd = [
+        "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=width,height",
+        "-of", "json", video_path
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, _ = await process.communicate()
+        data = json.loads(stdout)
+        
+        duration = float(data.get("format", {}).get("duration", 0))
+        
+        info = {
+            "duration": int(duration),
+            "width": 0,
+            "height": 0
+        }
+        
+        streams = data.get("streams", [])
+        for s in streams:
+            if "width" in s and "height" in s:
+                info["width"] = int(s.get("width", 0))
+                info["height"] = int(s.get("height", 0))
+                break
+            
+        return info
+    except Exception as e:
+        print(f"FFprobe error: {e}")
+        return {"duration": 0, "width": 0, "height": 0}
