@@ -143,34 +143,42 @@ async def download_video_ffmpeg(m3u8_url: str, output_path: str, headers: dict |
 
 async def download_video_ytdlp(url: str, output_path: str, headers: dict | None = None) -> bool:
     """Download video menggunakan yt-dlp dengan optimasi kecepatan (Async)."""
-    referer = "https://www.google.com/"
-    if "mydramawave.com" in url: referer = "https://www.mydramawave.com/"
-    elif "vividshort.com" in url: referer = "https://vividshort.com/"
-    elif "farsunpteltd.com" in url: referer = "https://pages.farsunpteltd.com/"
+    # Deteksi Referer & Origin secara Dinamis
+    parsed_u = urllib.parse.urlparse(url)
+    domain = parsed_u.netloc
+    origin = f"{parsed_u.scheme}://{domain}"
     
-    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    # Custom referer untuk platform tertentu
+    referer = origin + "/"
+    if "short-cdn.com" in domain or "fast-cdn.com" in domain or "dramabox" in url:
+        referer = "https://www.dramabox.com/"
+    elif "vividshort.com" in url:
+        referer = "https://www.vividshort.com/"
+        
+    # Gunakan User-Agent Mobile agar lebih lancar
+    ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     
-    # Deteksi Origin
-    parsed_url = urllib.parse.urlparse(url)
-    origin = f"{parsed_url.scheme}://{parsed_url.netloc}"
-
     cmd = [
-        "yt-dlp", "--no-warnings", "-q", 
+        "yt-dlp", "--no-warnings", 
         "--user-agent", ua, 
         "--referer", referer,
-        "--add-header", f"Origin: {origin}",
         "--no-check-certificate",
+        "--add-header", f"Origin: {origin}",
+        "--add-header", "Accept: */*",
+        "--add-header", "Accept-Language: en-US,en;q=0.9",
+        "--add-header", "Sec-Fetch-Mode: cors",
+        "--add-header", "Sec-Fetch-Site: cross-site",
         "--ignore-config",
         "--no-playlist",
         "--concurrent-fragments", "16",
         "--buffer-size", "1M",
-        "--retries", "3",
+        "--retries", "5",
         "-f", "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "--merge-output-format", "mp4"
     ]
     
-    # Tambahkan impersonate jika yt-dlp modern (meniru sidik jari browser Chrome)
-    cmd.extend(["--impersonate", "chrome"])
+    # Tambahkan impersonate jika yt-dlp modern (opsional, coba matikan jika masih 403)
+    # cmd.extend(["--impersonate", "chrome"])
     
     if headers:
         for k, v in headers.items():
