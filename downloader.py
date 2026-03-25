@@ -308,3 +308,23 @@ async def merge_videos(video_list: list[str], output_path: str) -> bool:
         print(f"Merge Error: {e}")
         if os.path.exists(list_path): os.remove(list_path)
         return False
+
+async def extract_thumbnail(video_path: str, thumb_path: str) -> bool:
+    """Ekstrak thumbnail dari video menggunakan FFmpeg."""
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-ss", "00:00:02", # Ambil detik ke-2
+        "-vframes", "1",
+        "-vf", "scale=320:-1", # Lebar 320px
+        thumb_path
+    ]
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        await process.communicate()
+        return process.returncode == 0 and os.path.exists(thumb_path)
+    except Exception:
+        return False
