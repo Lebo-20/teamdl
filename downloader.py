@@ -215,10 +215,8 @@ async def burn_subtitle(video_path: str, sub_path: str) -> Optional[str]:
     # Warna: &H00FFFFFF (Putih), &H00000000 (Hitam)
     style = "FontName=Standard Symbols PS,FontSize=10,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=1,Bold=1,MarginV=90"
     
-    # Filter subtitles + scaling 720p
-    # Gunakan subtitles filter dengan auto-detection format (srt/ass/vtt)
-    # Catatan: Path subtitle harus di-escape jika mengandung karakter aneh
-    filter_complex = f"subtitles='{sub_path}':force_style='{style}',scale=1280:720"
+    # Filter subtitles + scaling 720x1280 (Portrait untuk Short Drama)
+    filter_complex = f"subtitles='{sub_path}':force_style='{style}',scale=720:1280"
     
     cmd = [
         "ffmpeg", "-y", "-i", video_path,
