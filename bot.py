@@ -674,10 +674,22 @@ async def handle_callback_download(event, session_id):
             elapsed_str = str(timedelta(seconds=elapsed))
             
             eta_str = "--:--:--"
+            pct = 0
             if done > 0:
                 avg_time = elapsed / done
                 eta_sec = int(avg_time * (total - done))
                 eta_str = str(timedelta(seconds=eta_sec))
+                pct = int((done / total) * 100)
+
+            # Update Session for /panel
+            session["live_status"] = {
+                "done": done,
+                "total": total,
+                "pct": pct,
+                "eta": eta_str,
+                "elapsed": elapsed_str,
+                "type": "DOWNLOAD"
+            }
 
             text = (
                 f"⬇️ <b>PROSES DOWNLOAD</b>\n"
@@ -719,6 +731,41 @@ async def handle_callback_download(event, session_id):
     await event.edit(final_text, buttons=buttons, parse_mode='html')
 
 
+
+@client.on(events.NewMessage(pattern='/panel'))
+async def monitoring_panel(event):
+    owner_id = getattr(config_file, 'OWNER_ID', 0)
+    if event.sender_id != owner_id:
+        return
+        
+    if not user_sessions:
+        await event.respond("📭 <b>Tidak ada proses aktif saat ini.</b>", parse_mode='html')
+        return
+
+    text = "📊 <b>MONITORING PANEL</b>\n──────────────────────────\n"
+    active_count = 0
+    # Copy items to avoid 'dictionary changed size during iteration' error
+    for sid, sess in list(user_sessions.items()):
+        ls = sess.get("live_status")
+        if not ls: continue
+        
+        active_count += 1
+        drama = sess.get("drama_info", {}).get("title", "Unknown")
+        user_id = sid.split("_")[0]
+        
+        text += (
+            f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
+            f"📦 <b>Drama:</b> <i>{html.escape(drama)}</i>\n"
+            f"📺 <b>Progress:</b> {ls['done']}/{ls['total']} ({ls['pct']}%)\n"
+            f"⏳ <b>ETA:</b> {ls['eta']} | ⏱️ <b>Durasi:</b> {ls['elapsed']}\n"
+            f"──────────────────────────\n"
+        )
+
+    if active_count == 0:
+        await event.respond("📭 <b>Sesi ada tapi belum ada progres aktif.</b>", parse_mode='html')
+    else:
+        text += f"🚀 <b>Total Proses Aktif:</b> {active_count}"
+        await event.respond(text, parse_mode='html')
 
 @client.on(events.NewMessage(pattern='/id'))
 async def get_id(event):
