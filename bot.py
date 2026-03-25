@@ -18,7 +18,7 @@ import config as config_file
 from config import (
     BOT_TOKEN, API_ID, API_HASH, ALLOWED_USERS, TELEGRAM_MAX_SIZE, 
     TIMEOUT_DL, MAX_CONCURRENT_DOWNLOADS, WORKERS, HTTP_PROXY, 
-    TEMP_DIR, USE_ARIA2
+    TEMP_DIR, USE_ARIA2, BACKUP_CHANNEL_ID
 ) # type: ignore
 
 import parsers # type: ignore
@@ -40,6 +40,17 @@ def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     bar = "█" * filled + "░" * (width - filled)
     pct = int(100 * current / total)
     return f"[{bar}] {pct}%"
+
+async def send_and_backup(chat_id, *args, **kwargs):
+    """Kirim file ke user DAN otomatis copy ke channel backup."""
+    msg = await client.send_file(chat_id, *args, **kwargs)
+    if msg and BACKUP_CHANNEL_ID and str(chat_id) != str(BACKUP_CHANNEL_ID):
+        try:
+            # Gunakan file=msg.media untuk mengirim ulang tanpa upload ulang (Fast Copy)
+            await client.send_file(BACKUP_CHANNEL_ID, msg.media, caption=msg.message)
+        except Exception as e:
+            print(f"Backup Error: {e}")
+    return msg
 
 @client.on(events.NewMessage(pattern='/start'))
 async def start(event):
@@ -228,7 +239,7 @@ async def handle_rename_reply(event):
                                   f"📁 <code>{html.escape(new_name)}</code>", parse_mode='html')
                 except Exception: pass
 
-        await client.send_file(
+        await send_and_backup(
             event.chat_id,
             new_path,
             caption=f"📁 <b>{html.escape(new_name)}</b>",
@@ -317,7 +328,7 @@ async def handle_link_command(event):
                 
             if success and os.path.exists(output_path):
                 # Upload
-                await client.send_file(
+                await send_and_backup(
                     event.chat_id,
                     output_path,
                     caption=f"📺 Video ({current}/{total}):\n<code>{html.escape(url)}</code>",
@@ -395,7 +406,7 @@ async def handle_callback(event):
                 has_thumb = await downloader.extract_thumbnail(output_path, thumb_path)
                 v_info = await downloader.get_video_info(output_path)
                 
-                final_msg = await client.send_file(
+                final_msg = await send_and_backup(
                     event.chat_id,
                     output_path,
                     caption=f"✅ <b>Berhasil Menggabungkan {len(file_paths)} File!</b>\n\n📁 Nama: <code>{output_name}</code>\n\n👆 <b>Balas (reply)</b> ke pesan ini dengan nama baru jika ingin mengubah namanya.",
@@ -479,7 +490,7 @@ async def handle_callback(event):
         if success:
             await event.edit(f"⬆️ <b>Berhasil menggabungkan!</b>\nUploading: <code>{output_name}</code>", parse_mode='html')
             try:
-                await client.send_file(
+                await send_and_backup(
                     event.chat_id,
                     output_path,
                     caption=f"🎬 <b>{html.escape(title)}</b>\nFull Episodes Merged ✅",
@@ -557,7 +568,7 @@ async def handle_callback(event):
                     raise FileNotFoundError(f"File not found: {upload_path}")
 
                 # Telethon upload 
-                await client.send_file(
+                await send_and_backup(
                     event.chat_id,
                     upload_path,
                     caption=f"📺 {html.escape(title)} - Episode {current}",
