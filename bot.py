@@ -7,6 +7,8 @@ import subprocess
 import shutil
 import urllib.parse
 import re
+import time
+from datetime import timedelta
 from typing import Any
 
 # Telethon Imports
@@ -664,15 +666,26 @@ async def handle_callback_download(event, session_id):
                 counts["failed"] += 1
                 session['failed_list'].append(f"EP{ep_num}")
 
+    start_time = time.time()
     async def update_status_loop():
         while (counts["success"] + counts["failed"]) < total:
             done = counts["success"] + counts["failed"]
+            elapsed = int(time.time() - start_time)
+            elapsed_str = str(timedelta(seconds=elapsed))
+            
+            eta_str = "--:--:--"
+            if done > 0:
+                avg_time = elapsed / done
+                eta_sec = int(avg_time * (total - done))
+                eta_str = str(timedelta(seconds=eta_sec))
+
             text = (
                 f"⬇️ <b>PROSES DOWNLOAD</b>\n"
                 f"📦 <b>Drama:</b> {html.escape(title)}\n"
-                f"📺 <b>Progress:</b> {done}/{total}\n"
+                f"📺 <b>Progress:</b> {done}/{total} | ⏳ <b>ETA:</b> {eta_str}\n"
                 f"{make_progress_bar(done, total)}\n"
-                f"✅ Selesai: {counts['success']} | ❌ Gagal: {counts['failed']}"
+                f"✅ Selesai: {counts['success']} | ❌ Gagal: {counts['failed']}\n"
+                f"⏱️ <b>Sudah Berjalan:</b> {elapsed_str}"
             )
             try:
                 await event.edit(text, parse_mode='html')
@@ -684,15 +697,17 @@ async def handle_callback_download(event, session_id):
     status_task = asyncio.create_task(update_status_loop())
     await asyncio.gather(*tasks)
     status_task.cancel()
+    
+    total_time = int(time.time() - start_time)
+    duration_str = str(timedelta(seconds=total_time))
 
     failed_text = f"\n⚠️ Gagal: {', '.join(session['failed_list'][:10])}" if session['failed_list'] else ""
     final_text = (
         f"⬇️ <b>DOWNLOAD SELESAI</b>\n"
         f"📦 <b>Drama:</b> {html.escape(title)}\n"
         f"✅ Berhasil: {counts['success']} | ❌ Gagal: {counts['failed']}{html.escape(failed_text)}\n"
+        f"⏱️ <b>Total Waktu:</b> {duration_str}\n"
         f"\nPilih format upload:"
-    )
-
     buttons = [
         [
             Button.inline("📦 Upload MKV", data=f"up_mkv_{session_id}"),
