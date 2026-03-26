@@ -709,19 +709,43 @@ async def handle_callback_download(event, session_id):
                 # Subtitle
                 sub_url = ep.get('subtitle')
                 if success and sub_url:
+                    # Deteksi format subtitle dari URL (vtt atau srt)
+                    is_vtt = ".vtt" in sub_url.lower() or "mime_type=text_plain" in sub_url
+                    raw_sub_ext = ".vtt" if is_vtt else ".srt"
+                    raw_sub_path = os.path.join(session['session_dir'], f"temp_sub_raw_{ep_num}{raw_sub_ext}")
                     sub_path = os.path.join(session['session_dir'], f"temp_sub_{ep_num}.srt")
-                    if await downloader.download_file(sub_url, sub_path):
-                        if session.get('sub_type') == 'hard':
-                            # Hardsub (Burn-in)
-                            new_out = await downloader.burn_subtitle(output_path, sub_path)
+                    
+                    if await downloader.download_file(sub_url, raw_sub_path):
+                        # Konversi VTT ke SRT jika perlu (FFmpeg bisa handle ini)
+                        if is_vtt:
+                            import asyncio as _asyncio
+                            import subprocess as _subprocess
+                            conv_proc = await _asyncio.create_subprocess_exec(
+                                "ffmpeg", "-y", "-i", raw_sub_path, sub_path,
+                                stdout=_subprocess.DEVNULL,
+                                stderr=_subprocess.DEVNULL
+                            )
+                            await conv_proc.communicate()
+                            if os.path.exists(raw_sub_path): os.remove(raw_sub_path)
+                            if not os.path.exists(sub_path):
+                                print(f"VTT->SRT conversion failed for EP{ep_num}")
+                                sub_path = None
                         else:
-                            # Softsub (Muxing)
-                            new_out = await downloader.mux_subtitle(output_path, sub_path, "mp4")
-                            
-                        if new_out:
-                            if os.path.exists(output_path): os.remove(output_path)
-                            if os.path.exists(sub_path): os.remove(sub_path)
-                            output_path = new_out
+                            # Format sudah SRT, langsung pakai
+                            os.rename(raw_sub_path, sub_path)
+                        
+                        if sub_path and os.path.exists(sub_path):
+                            if session.get('sub_type') == 'hard':
+                                # Hardsub (Burn-in)
+                                new_out = await downloader.burn_subtitle(output_path, sub_path)
+                            else:
+                                # Softsub (Muxing)
+                                new_out = await downloader.mux_subtitle(output_path, sub_path, "mp4")
+                                
+                            if new_out:
+                                if os.path.exists(output_path): os.remove(output_path)
+                                if os.path.exists(sub_path): os.remove(sub_path)
+                                output_path = new_out
             except Exception as e:
                 print(f"Error download EP{ep_num}: {e}")
                 success = False
