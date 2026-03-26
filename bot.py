@@ -408,11 +408,11 @@ async def handle_link_command(event):
         filename_orig = os.path.basename(path)
         
         if not filename_orig or '.' not in filename_orig or len(filename_orig) < 4:
-            filename = f"video_{current}.mp4"
+            filename = f"video_{current}.mkv"
         else:
-            # Tetap gunakan nama asli tapi pastikan extension mp4 dan amankan dari tabrakan
+            # Tetap gunakan nama asli tapi pastikan extension mkv dan amankan dari tabrakan
             name_part = filename_orig.rsplit('.', 1)[0]
-            filename = f"{name_part}_{current}.mp4"
+            filename = f"{name_part}_{current}.mkv"
             
         output_path = os.path.join(session_dir, filename)
         

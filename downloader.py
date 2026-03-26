@@ -199,7 +199,10 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         "--concurrent-fragments", "16",
         "--buffer-size", "1M",
         "--retries", "10",
-        "--merge-output-format", "mp4"
+        "--all-subs",
+        "--embed-subs",
+        "--sub-langs", "id.*,ind.*,en.*,all",
+        "--merge-output-format", "mkv"
     ]
     
     # Disable aria2c for proxies and specific domains to improve stability
