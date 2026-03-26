@@ -15,11 +15,22 @@ from typing import Any
 from telethon import TelegramClient, events, Button
 from telethon.tl.types import DocumentAttributeVideo
 import config as config_file
-from config import (
-    BOT_TOKEN, API_ID, API_HASH, ALLOWED_USERS, TELEGRAM_MAX_SIZE, 
-    TIMEOUT_DL, MAX_CONCURRENT_DOWNLOADS, WORKERS, HTTP_PROXY, 
-    TEMP_DIR, USE_ARIA2, BACKUP_CHANNEL_ID
-) # type: ignore
+
+# Safely import optional settings
+def get_config(key, default=None):
+    return getattr(config_file, key, default)
+
+# Mandatory imports
+from config import BOT_TOKEN, API_ID, API_HASH, ALLOWED_USERS, TELEGRAM_MAX_SIZE
+
+# Optional/Defaulted imports
+TIMEOUT_DL = get_config('TIMEOUT_DL', 3600)
+MAX_CONCURRENT_DOWNLOADS = get_config('MAX_CONCURRENT_DOWNLOADS', 5)
+WORKERS = get_config('WORKERS', 8)
+HTTP_PROXY = get_config('HTTP_PROXY', None)
+TEMP_DIR = get_config('TEMP_DIR', './downloads/')
+USE_ARIA2 = get_config('USE_ARIA2', True)
+BACKUP_CHANNEL_ID = get_config('BACKUP_CHANNEL_ID', None)
 
 import parsers # type: ignore
 import downloader # type: ignore
@@ -30,8 +41,10 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 # Client Setup
 client = TelegramClient('bot_session', API_ID, API_HASH, proxy=HTTP_PROXY).start(bot_token=BOT_TOKEN)
 
-# Kamus penyimpanan session per user (sementara di memory)
 user_sessions: dict[str, dict[str, Any]] = {}
+
+# Panel Monitoring Global (untuk live update)
+panel_messages: dict[int, Any] = {} # {chat_id: message_obj}
 
 def make_progress_bar(current: int, total: int, width: int = 20) -> str:
     if total <= 0:
@@ -51,6 +64,49 @@ async def send_and_backup(chat_id, *args, **kwargs):
         except Exception as e:
             print(f"Backup Error: {e}")
     return msg
+
+async def panel_update_loop():
+    """Background task untuk memperbarui status di panel monitoring secara otomatis (Live Update)."""
+    while True:
+        if not panel_messages:
+            await asyncio.sleep(5)
+            continue
+            
+        active_count = 0
+        text = "📊 <b>LIVE MONITORING PANEL</b>\n──────────────────────────\n"
+        
+        # Hitung data terbaru dari semua user
+        for sid, sess in list(user_sessions.items()):
+            ls = sess.get("live_status")
+            if not ls: continue
+            
+            active_count += 1
+            drama = sess.get("drama_info", {}).get("title", "Unknown")
+            user_id = sid.split("_")[0]
+            
+            text += (
+                f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
+                f"📦 <b>Drama:</b> <i>{html.escape(drama)}</i>\n"
+                f"📺 <b>Progress:</b> {ls['done']}/{ls['total']} ({ls['pct']}%)\n"
+                f"⏳ <b>ETA:</b> {ls['eta']} | ⏱️ <b>Durasi:</b> {ls['elapsed']}\n"
+                f"──────────────────────────\n"
+            )
+            
+        if active_count == 0:
+            text += "📭 <b>Tidak ada proses aktif saat ini.</b>"
+        else:
+            text += f"🚀 <b>Total Proses Aktif:</b> {active_count}\n"
+            text += f"🔄 <i>Auto-update tiap 5 detik...</i>"
+
+        # Update semua panel yang terdaftar (biasanya hanya 1 milik Owner)
+        for chat_id, msg in list(panel_messages.items()):
+            try:
+                await msg.edit(text, parse_mode='html')
+            except Exception:
+                # Jika pesan dihapus user atau error, bersihkan dari daftar
+                panel_messages.pop(chat_id, None)
+                
+        await asyncio.sleep(5)
 
 @client.on(events.NewMessage(pattern='/start'))
 async def start(event):
@@ -751,34 +807,9 @@ async def monitoring_panel(event):
     if event.sender_id != owner_id:
         return
         
-    if not user_sessions:
-        await event.respond("📭 <b>Tidak ada proses aktif saat ini.</b>", parse_mode='html')
-        return
-
-    text = "📊 <b>MONITORING PANEL</b>\n──────────────────────────\n"
-    active_count = 0
-    # Copy items to avoid 'dictionary changed size during iteration' error
-    for sid, sess in list(user_sessions.items()):
-        ls = sess.get("live_status")
-        if not ls: continue
-        
-        active_count += 1
-        drama = sess.get("drama_info", {}).get("title", "Unknown")
-        user_id = sid.split("_")[0]
-        
-        text += (
-            f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
-            f"📦 <b>Drama:</b> <i>{html.escape(drama)}</i>\n"
-            f"📺 <b>Progress:</b> {ls['done']}/{ls['total']} ({ls['pct']}%)\n"
-            f"⏳ <b>ETA:</b> {ls['eta']} | ⏱️ <b>Durasi:</b> {ls['elapsed']}\n"
-            f"──────────────────────────\n"
-        )
-
-    if active_count == 0:
-        await event.respond("📭 <b>Sesi ada tapi belum ada progres aktif.</b>", parse_mode='html')
-    else:
-        text += f"🚀 <b>Total Proses Aktif:</b> {active_count}"
-        await event.respond(text, parse_mode='html')
+    msg = await event.respond("⏳ <b>Menyiapkan Live Monitoring Panel...</b>", parse_mode='html')
+    # Daftarkan pesan ini untuk di-update otomatis oleh panel_update_loop
+    panel_messages[event.chat_id] = msg
 
 @client.on(events.NewMessage(pattern='/id'))
 async def get_id(event):
@@ -810,4 +841,5 @@ async def restart_bot(event):
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
 print("Telethon Bot is running... (Press Ctrl+C to stop)")
+client.loop.create_task(panel_update_loop())
 client.run_until_disconnected()
