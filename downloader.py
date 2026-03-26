@@ -15,6 +15,8 @@ async def download_file(url: str, output_path: str, headers: Optional[Dict[str, 
     elif "shorttv.live" in url: referer = "https://shorttv.live/"
     elif "netshort.com" in url: referer = "https://www.netshort.com/"
     elif "reelshort.com" in url or "crazymaplestudios.com" in url: referer = "https://www.reelshort.com/"
+    elif "vigloo.com" in url: referer = "https://www.vigloo.com/"
+    elif "rishort.workers.dev" in url: referer = "https://hls-proxy.rishort.workers.dev/"
     
     parsed = urllib.parse.urlparse(referer)
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -57,6 +59,8 @@ async def download_aria2(url: str, output_path: str, headers: Optional[Dict[str,
     elif "farsunpteltd.com" in url: referer = "https://pages.farsunpteltd.com/"
     elif "netshort.com" in url: referer = "https://www.netshort.com/"
     elif "reelshort.com" in url or "crazymaplestudios.com" in url: referer = "https://www.reelshort.com/"
+    elif "vigloo.com" in url: referer = "https://www.vigloo.com/"
+    elif "rishort.workers.dev" in url: referer = "https://hls-proxy.rishort.workers.dev/"
     
     dir_name = os.path.dirname(output_path)
     file_name = os.path.basename(output_path)
@@ -108,6 +112,8 @@ async def download_video_ffmpeg(m3u8_url: str, output_path: str, headers: dict |
     elif "shorttv.live" in m3u8_url: referer = "https://shorttv.live/"
     elif "netshort.com" in m3u8_url: referer = "https://www.netshort.com/"
     elif "reelshort.com" in m3u8_url or "crazymaplestudios.com" in m3u8_url: referer = "https://www.reelshort.com/"
+    elif "vigloo.com" in m3u8_url: referer = "https://www.vigloo.com/"
+    elif "rishort.workers.dev" in m3u8_url: referer = "https://hls-proxy.rishort.workers.dev/"
     
     cmd = ["ffmpeg", "-y"]
     
@@ -168,6 +174,10 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         referer = "https://www.netshort.com/"
     elif "reelshort.com" in url or "crazymaplestudios.com" in url:
         referer = "https://www.reelshort.com/"
+    elif "vigloo.com" in url:
+        referer = "https://www.vigloo.com/"
+    elif "rishort.workers.dev" in url:
+        referer = "https://hls-proxy.rishort.workers.dev/"
         
     # Gunakan User-Agent Mobile agar lebih lancar
     ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"

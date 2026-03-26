@@ -823,11 +823,33 @@ async def handle_callback_download(event, session_id):
                 if success and sub_url:
                     # Deteksi format subtitle dari URL atau Parser (vtt atau srt)
                     is_vtt = "vtt" in sub_fmt or ".vtt" in sub_url.lower() or "mime_type=text_plain" in sub_url
+                    is_hls_sub = ".m3u8" in sub_url.lower()
+                    
                     raw_sub_ext = ".vtt" if is_vtt else ".srt"
+                    if is_hls_sub: raw_sub_ext = ".srt" # Langsung ke srt via ffmpeg
+                    
                     raw_sub_path = os.path.join(session['session_dir'], f"temp_sub_raw_{ep_num}{raw_sub_ext}")
                     sub_path = os.path.join(session['session_dir'], f"temp_sub_{ep_num}.srt")
                     
-                    if await downloader.download_file(sub_url, raw_sub_path):
+                    sub_downloaded = False
+                    if is_hls_sub:
+                        # Gunakan ffmpeg untuk download HLS subtitle langsung ke srt
+                        import asyncio as _asyncio
+                        import subprocess as _subprocess
+                        conv_proc = await _asyncio.create_subprocess_exec(
+                            "ffmpeg", "-y", "-i", sub_url, sub_path,
+                            stdout=_subprocess.DEVNULL,
+                            stderr=_subprocess.DEVNULL
+                        )
+                        await conv_proc.communicate()
+                        if os.path.exists(sub_path):
+                            sub_downloaded = True
+                            is_vtt = False # Sudah srt via ffmpeg
+                    else:
+                        if await downloader.download_file(sub_url, raw_sub_path):
+                            sub_downloaded = True
+                    
+                    if sub_downloaded:
                         # Konversi VTT ke SRT jika perlu (FFmpeg bisa handle ini)
                         if is_vtt:
                             import asyncio as _asyncio
