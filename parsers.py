@@ -47,6 +47,8 @@ def detect_source(data: Any) -> str:
         return "reelshort"
     if "resultCode" in data and "dataResult" in data and "tvInfo" in data.get("dataResult", {}):
         return "minutedrama"
+    if "data" in data and isinstance(data["data"], dict) and "meta" in data["data"] and "shorten.watch" in str(data):
+        return "shorten"
     return "unknown"
 
 def parse_dotdrama(data: Any) -> dict:
@@ -447,6 +449,8 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_reelshort(data, filename)
     elif source_type == "minutedrama":
         return parse_minutedrama(data)
+    elif source_type == "shorten":
+        return parse_shorten(data)
     else:
         raise ValueError(f"Unknown source type: {source_type}")
 
@@ -642,5 +646,46 @@ def parse_minutedrama(data: dict) -> dict:
         "sinopsis": tv_info.get("desc", ""),
         "cover": tv_info.get("coverUrl", ""),
         "total_ep": tv_info.get("episodesCount", len(episodes)),
+        "episodes": sorted(episodes, key=lambda x: x["num"])
+    }
+
+def parse_shorten(data: dict) -> dict:
+    """Parsing format Shorten (shorten.watch)."""
+    root_data = data.get("data", {}).get("data", {})
+    title = root_data.get("title", "Unknown Shorten")
+    desc = root_data.get("description", "")
+    cover = root_data.get("image", "")
+    total_ep = root_data.get("episode", {}).get("total", 0)
+    
+    episodes = []
+    seasons = root_data.get("seasons", [])
+    for season in seasons:
+        for item in season.get("episodes", []):
+            url = item.get("video_url")
+            
+            # Subtitle Indonesia
+            sub_url = None
+            sub_format = None
+            sub_list = item.get("subtitles", [])
+            for sub in sub_list:
+                code = str(sub.get("code", "")).upper()
+                lang = str(sub.get("language", "")).lower()
+                if code == "ID" or "indonesian" in lang:
+                    sub_url = sub.get("url")
+                    sub_format = sub.get("format")
+                    break
+            
+            episodes.append({
+                "num": item.get("number", 0),
+                "url": url,
+                "subtitle": sub_url,
+                "sub_format": sub_format
+            })
+            
+    return {
+        "title": title,
+        "sinopsis": desc,
+        "cover": cover,
+        "total_ep": total_ep if total_ep > 0 else len(episodes),
         "episodes": sorted(episodes, key=lambda x: x["num"])
     }
