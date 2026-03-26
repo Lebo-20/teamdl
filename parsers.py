@@ -21,7 +21,7 @@ def detect_source(data: Any) -> str:
         return "dramawave_info"
     if isinstance(data.get("episode_list"), list) and "external_audio_h264_m3u8" in str(data):
         return "dramawave_direct"
-    if "status_code" in data and "playlet_id" in data.get("data", {}):
+    if "status_code" in data and ("playlet_id" in data.get("data", {}) or "playletId" in data.get("data", {})):
         return "flikreels"
     if "series" in data and "videos" in data and "main_url" in str(data.get("videos", [{}])[0]):
         return "poincinta"
@@ -197,7 +197,12 @@ def get_flikreels_url(episode: dict) -> str:
     verify_token = qs.get("verify", [None])[0] or qs.get("token", [None])[0]
     
     if origin_path and verify_token:
-        # Rekonstruksi MP4 URL penuh menggunakan base domain dari HLS url dan menambahkan verify parameter
+        # Jika origin_path sudah berupa URL penuh
+        if "://" in origin_path:
+            sep = "&" if "?" in origin_path else "?"
+            return f"{origin_path}{sep}verify={verify_token}"
+            
+        # Rekonstruksi MP4 URL penuh menggunakan base domain dari HLS url
         base_domain = f"{parsed.scheme}://{parsed.netloc}"
         if not origin_path.startswith('/'):
             origin_path = '/' + origin_path
