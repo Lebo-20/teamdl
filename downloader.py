@@ -179,8 +179,10 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
     elif "rishort.workers.dev" in url:
         referer = "https://hls-proxy.rishort.workers.dev/"
         
-    # Gunakan User-Agent Mobile agar lebih lancar
-    ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+    # Gunakan User-Agent Mobile agar lebih lancar, Desktop untuk Worker Proxy
+    ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    if "vigloo.com" in url or "reelshort.com" in url:
+        ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     
     cmd = [
         "yt-dlp", "--no-warnings", 
@@ -196,12 +198,19 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         "--no-playlist",
         "--concurrent-fragments", "16",
         "--buffer-size", "1M",
-        "--retries", "5",
-        "--external-downloader", "aria2c", 
-        "--external-downloader-args", "aria2c:-x 16 -s 16 -k 1M",
-        "-f", "bestvideo+bestaudio/best",
+        "--retries", "10",
         "--merge-output-format", "mp4"
     ]
+    
+    # Disable aria2c for proxies and specific domains to improve stability
+    is_worker = "workers.dev" in domain or "rishort" in url
+    if not is_worker:
+        cmd.extend([
+            "--external-downloader", "aria2c", 
+            "--external-downloader-args", "aria2c:-x 16 -s 16 -k 1M"
+        ])
+    
+    cmd.extend(["-f", "bestvideo+bestaudio/best"])
     
     # Tambahkan impersonate jika yt-dlp modern (opsional)
     # cmd.extend(["--impersonate", "chrome"])
@@ -216,8 +225,9 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         process = await asyncio.create_subprocess_exec(*cmd)
         await process.communicate()
         
-        if process.returncode == 0 and os.path.exists(output_path):
-            if os.path.getsize(output_path) > 1024 * 1024: # Minimal 1MB
+        # Cek apakah file benar-benar ada dan ukurannya masuk akal
+        if os.path.exists(output_path):
+            if os.path.getsize(output_path) > 1024 * 512: # Minimal 512KB
                 return True
             else:
                 print(f"Warning: yt-dlp output too small ({os.path.getsize(output_path)} bytes).")
