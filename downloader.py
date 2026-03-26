@@ -277,35 +277,57 @@ async def mux_subtitle(video_path: str, sub_path: str, output_ext: str) -> str:
         return ""
 
 async def merge_videos(video_list: list[str], output_path: str) -> bool:
-    """Gabungkan daftar video menjadi satu file menggunakan FFmpeg concat demuxer."""
+    """Gabungkan daftar video menjadi satu file menggunakan metode intermediate TS agar durasi akurat."""
     if not video_list: return False
     
-    # Buat file list untuk concat
-    list_path = output_path.replace(".mp4", "_list.txt")
-    with open(list_path, "w", encoding="utf-8") as f:
-        for v in video_list:
-            # escaping path for ffmpeg concat list
-            abs_v = os.path.abspath(v).replace("\\", "/")
-            f.write(f"file '{abs_v}'\n")
-            
-    cmd = [
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", list_path, "-c", "copy", output_path
-    ]
+    temp_ts_files = []
+    session_dir = os.path.dirname(output_path)
     
     try:
+        # 1. Konversi setiap MP4 ke TS (Lossless & Cepat)
+        for idx, v in enumerate(video_list):
+            ts_path = os.path.join(session_dir, f"temp_merge_{idx}.ts")
+            # Gunakan bitstream filter untuk h264/hevc agar kompatibel
+            cmd_ts = [
+                "ffmpeg", "-y", "-i", v,
+                "-c", "copy", "-bsf:v", "h264_mp4toannexb", 
+                "-f", "mpegts", ts_path
+            ]
+            process = await asyncio.create_subprocess_exec(
+                *cmd_ts,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            await process.communicate()
+            if os.path.exists(ts_path):
+                temp_ts_files.append(ts_path)
+
+        if not temp_ts_files: return False
+
+        # 2. Gabungkan file TS menggunakan protokol concat
+        concat_str = "concat:" + "|".join(temp_ts_files)
+        cmd_merge = [
+            "ffmpeg", "-y", "-i", concat_str,
+            "-c", "copy", "-bsf:a", "aac_adtstoasc", 
+            "-movflags", "+faststart", # Supaya durasi terhitung benar & cepat diload
+            output_path
+        ]
+        
         process = await asyncio.create_subprocess_exec(
-            *cmd,
+            *cmd_merge,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
         await process.communicate()
-        if os.path.exists(list_path): os.remove(list_path)
+        
         return process.returncode == 0 and os.path.exists(output_path)
     except Exception as e:
         print(f"Merge Error: {e}")
-        if os.path.exists(list_path): os.remove(list_path)
         return False
+    finally:
+        # Bersihkan file TS sementara
+        for ts in temp_ts_files:
+            if os.path.exists(ts): os.remove(ts)
 
 async def extract_thumbnail(video_path: str, thumb_path: str) -> bool:
     """Ekstrak thumbnail dari video menggunakan FFmpeg."""
