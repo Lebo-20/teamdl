@@ -40,6 +40,8 @@ def detect_source(data: Any) -> str:
     if "videoInfo" in data and "episodesInfo" in data:
         return "velolo"
     if "shortPlayId" in data and "shortPlayName" in data:
+        if "shortPlayEpisodeInfos" in data:
+            return "netshort"
         return "shorttv"
     return "unknown"
 
@@ -433,6 +435,8 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_velolo(data)
     elif source_type == "shorttv":
         return parse_shorttv(data)
+    elif source_type == "netshort":
+        return parse_netshort(data)
     elif source_type == "draamabox_list":
         return parse_draamabox_list(data, filename)
     else:
@@ -506,5 +510,35 @@ def parse_shorttv(data: dict) -> dict:
         "sinopsis": "",
         "cover": episodes_raw[0].get("cover", "") if episodes_raw else "",
         "total_ep": data.get("totalEpisodes", len(episodes)),
+        "episodes": sorted(episodes, key=lambda x: x["num"])
+    }
+
+def parse_netshort(data: dict) -> dict:
+    """Parsing format NetShort (netshort.com) - gunakan playVoucher sebagai URL video."""
+    episodes_raw = data.get("shortPlayEpisodeInfos", [])
+    episodes = []
+    
+    for item in episodes_raw:
+        url = item.get("playVoucher")
+        
+        # Ambil subtitle Indonesia (language_id 23 = ID)
+        sub_list = item.get("subtitleList", [])
+        sub_url = None
+        for sub in sub_list:
+            if sub.get("language_id") == 23 or "id" in sub.get("subtitleLanguage", "").lower():
+                sub_url = sub.get("url")
+                break
+        
+        episodes.append({
+            "num": item.get("episodeNo", 0),
+            "url": url,
+            "subtitle": sub_url
+        })
+        
+    return {
+        "title": data.get("shortPlayName", "Unknown NetShort"),
+        "sinopsis": data.get("shotIntroduce", ""),
+        "cover": data.get("shortPlayCover", ""),
+        "total_ep": data.get("totalEpisode", len(episodes)),
         "episodes": sorted(episodes, key=lambda x: x["num"])
     }
