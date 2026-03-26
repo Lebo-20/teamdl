@@ -68,12 +68,13 @@ async def send_and_backup(chat_id, *args, **kwargs):
 
     if msg and backup_id and int(chat_id) != backup_id:
         try:
-            # Gunakan file=msg.media untuk Fast Copy (tanpa upload ulang)
-            # send_message dengan file= seringkali lebih stabil untuk copy media antar peer
-            await client.send_message(
+            # Di Telethon send_message tidak pake caption jika mengirim media melalui file=
+            # Sebaiknya gunakan send_file dengan file=msg.media
+            await client.send_file(
                 backup_id, 
                 file=msg.media, 
                 caption=msg.message,
+                force_document=True,
                 parse_mode='html'
             )
         except Exception as e:
@@ -141,8 +142,8 @@ async def handle_document(event):
         
     doc = event.document
     filename = event.file.name
-    if not filename.endswith('.json'):
-        await event.respond("❌ Mohon kirimkan file berformat JSON.")
+    if not (filename.endswith('.json') or filename.endswith('.m3u8')):
+        await event.respond("❌ Mohon kirimkan file berformat JSON atau M3U8.")
         return
 
     # Download JSON
@@ -150,14 +151,33 @@ async def handle_document(event):
     file_path = os.path.join(TEMP_DIR, filename)
     await event.download_media(file=file_path)
 
+    if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+        await event.respond("❌ File JSON kosong atau gagal didownload.")
+        return
+
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+            content = f.read()
             
-        source_type = parsers.detect_source(data)
-        if source_type == "unknown":
-            await event.respond("❌ Format JSON tidak dikenali.")
-            return
+        try:
+            data = json.loads(content)
+            source_type = parsers.detect_source(data)
+            if source_type == "unknown":
+                await event.respond("❌ Format JSON tidak dikenali.")
+                return
+            drama_info = parsers.parse_json_data(data, source_type, filename)
+        except json.JSONDecodeError:
+            # Jika JSON gagal, cek apakah ini M3U8
+            if "#EXTM3U" in content:
+                source_type = "m3u8_raw"
+                drama_info = parsers.parse_m3u8_content(content, filename)
+            else:
+                await event.respond("❌ <b>Error:</b> File bukan JSON valid atau M3U8 valid.")
+                return
+            
+    except Exception as e:
+        await event.respond(f"❌ <b>Error Membaca File:</b>\n<code>{e}</code>", parse_mode='html')
+        return
             
         drama_info = parsers.parse_json_data(data, source_type, filename)
         session_id = f"{user_id}_{event.id}"
@@ -416,8 +436,17 @@ async def handle_link_command(event):
                             langs.append(lang_code)
 
             # Store in session for callback
+            batch_id = f"batch_{user_id}_{event.id}"
+            if batch_id not in user_sessions:
+                user_sessions[batch_id] = {
+                    "total": total,
+                    "success": 0,
+                    "failed": 0
+                }
+
             session_id = f"link_{user_id}_{event.id}_{idx}"
             user_sessions[session_id] = {
+                "batch_id": batch_id,
                 "url": url,
                 "langs": langs,
                 "current": current,
@@ -452,13 +481,19 @@ async def handle_link_command(event):
                 continue # Tunggu user klik tombol
             else:
                 # Tidak ada sub, langsung download
-                await perform_link_download(event.chat_id, url, current, total, summary_msg, event.id, "none")
-                success_count += 1
+                success = await perform_link_download(event.chat_id, url, current, total, summary_msg, event.id, "none")
+                # Update batch
+                user_sessions[batch_id]["success" if success else "failed"] += 1
+                if user_sessions[batch_id]["success"] + user_sessions[batch_id]["failed"] == total:
+                    # Report Final
+                    await event.respond(f"✅ <b>Download Selesai!</b>\nBerhasil: {user_sessions[batch_id]['success']}\nGagal: {user_sessions[batch_id]['failed']}", parse_mode='html')
+                    user_sessions.pop(batch_id, None)
+
         except Exception as e:
             print(f"Error checking subs for {url}: {e}")
             # Fallback ke download biasa
-            await perform_link_download(event.chat_id, url, current, total, summary_msg, event.id, "all")
-            success_count += 1
+            success = await perform_link_download(event.chat_id, url, current, total, summary_msg, event.id, "all")
+            # Update batch logic here too if needed
 
     # Final summary update (jika tidak ada link yang butuh konfirmasi)
     # Note: flow akan berlanjut di callback handler
@@ -547,24 +582,32 @@ async def handle_link_sub_callback(event):
     # Download
     success = await perform_link_download(chat_id, url, current, total, summary_msg, reply_to, lang)
     
+    batch_id = session.get('batch_id')
+    if batch_id and batch_id in user_sessions:
+        user_sessions[batch_id]["success" if success else "failed"] += 1
+        
+        # Cek apakah sudah semua diproses
+        batch = user_sessions[batch_id]
+        if batch["success"] + batch["failed"] == batch["total"]:
+            # Report Final
+            final_text = (
+                f"✅ <b>DOWNLOAD SELESAI</b>\n"
+                f"──────────────────────────\n"
+                f"📋 <b>Total Link</b>  : {batch['total']}\n"
+                f"✅ <b>Berhasil</b>    : {batch['success']}\n"
+                f"❌ <b>Gagal</b>       : {batch['failed']}\n"
+                f"──────────────────────────"
+            )
+            await client.send_message(chat_id, final_text, parse_mode='html')
+            user_sessions.pop(batch_id, None)
+
     if success:
         await event.edit(f"✅ <b>Selesai!</b> Video dikirim di bawah.", parse_mode='html')
     else:
         await event.edit(f"❌ <b>Gagal Download.</b> Silakan cek log atau pesan error di bawah.", parse_mode='html')
         
-    # Hapus sesi
+    # Hapus sesi link
     user_sessions.pop(session_id, None)
-            
-    # Final report
-    user_sessions.pop(batch_session_id, None)
-    final_text = (
-        f"✅ <b>DOWNLOAD SELESAI</b>\n"
-        f"──────────────────────────\n"
-        f"📋 <b>Total Link</b>  : {total}\n"
-        f"✅ <b>Berhasil</b>    : {success_count}\n"
-        f"❌ <b>Gagal</b>       : {fail_count}\n"
-        f"──────────────────────────"
-    )
     await summary_msg.edit(final_text, parse_mode='html')
 
 @client.on(events.CallbackQuery)

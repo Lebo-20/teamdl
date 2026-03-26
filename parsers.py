@@ -1,4 +1,5 @@
 import urllib.parse
+import re
 from typing import Any, Dict, List, Optional
 
 def detect_source(data: Any) -> str:
@@ -336,6 +337,7 @@ def parse_vigloo(data: dict, filename: str) -> dict:
             episodes.append({
                 "num": item.get("episodeNumber", 0) or item.get("number", 0),
                 "url": item.get("videoUrl") or item.get("url"),
+                "cookies": item.get("cookies", payload.get("cookies", {})),
                 "subtitle": sub_url
             })
         title = drama.get("title", "Unknown Vigloo")
