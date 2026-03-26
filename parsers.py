@@ -719,3 +719,56 @@ def parse_shorten(data: dict) -> dict:
         "total_ep": total_ep if total_ep > 0 else len(episodes),
         "episodes": sorted(episodes, key=lambda x: x["num"])
     }
+
+def parse_m3u8_content(content: str, filename: str) -> dict:
+    """Ekstrak informasi dari file M3U8 mentah."""
+    lines = content.split('\n')
+    video_url = None
+    subtitles = []
+    
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if not line: continue
+        
+        # Cari Video URL (baris setelah STREAM-INF atau baris pertama yang mulai dengan http)
+        if "#EXT-X-STREAM-INF" in line:
+            if i + 1 < len(lines):
+                next_line = lines[i+1].strip()
+                if next_line.startswith("http"):
+                    video_url = next_line
+        elif line.startswith("http") and not video_url:
+            video_url = line
+            
+        # Cari Subtitles
+        if "#EXT-X-MEDIA:TYPE=SUBTITLES" in line:
+            lang_match = re.search(r'LANGUAGE="([^"]+)"', line)
+            name_match = re.search(r'NAME="([^"]+)"', line)
+            uri_match = re.search(r'URI="([^"]+)"', line)
+            
+            if uri_match:
+                lang = lang_match.group(1).lower() if lang_match else (name_match.group(1).lower() if name_match else "unknown")
+                subtitles.append({
+                    "language": lang,
+                    "url": uri_match.group(1)
+                })
+    
+    # Cari sub Indonesia
+    sub_url = None
+    for sub in subtitles:
+        if sub['language'] in ["id", "ind", "indonesia", "indonesian"]:
+            sub_url = sub['url']
+            break
+            
+    title = filename.replace(".m3u8", "").replace(".json", "") or "M3U8 Video"
+    
+    return {
+        "title": title,
+        "sinopsis": "M3U8 Raw File",
+        "cover": "",
+        "total_ep": 1,
+        "episodes": [{
+            "num": 1,
+            "url": video_url,
+            "subtitle": sub_url
+        }]
+    }
