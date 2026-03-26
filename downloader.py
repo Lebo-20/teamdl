@@ -199,8 +199,9 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         "--concurrent-fragments", "16",
         "--buffer-size", "1M",
         "--retries", "10",
-        "--all-subs",
         "--embed-subs",
+        "--sub-format", "srt/vtt/best",
+        "--convert-subs", "srt",
         "--merge-output-format", "mkv"
     ]
     
@@ -208,10 +209,10 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
     if lang == "none":
         cmd.extend(["--no-write-subs"])
     elif lang == "all":
-        cmd.extend(["--sub-langs", "id.*,ind.*,en.*,all"])
+        cmd.extend(["--write-subs", "--sub-langs", "id.*,ind.*,en.*,all"])
     else:
-        # Match specific language
-        cmd.extend(["--sub-langs", f"{lang}.*"])
+        # Match specific language (e.g. ind, eng)
+        cmd.extend(["--write-subs", "--sub-langs", f"{lang}.*"])
     
     # Disable aria2c for proxies and specific domains to improve stability
     is_worker = "workers.dev" in domain or "rishort" in url
