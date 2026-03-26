@@ -426,10 +426,12 @@ async def handle_link_command(event):
                 
             if success and os.path.exists(output_path):
                 # Upload
+                # TRUNCATE URL in caption to prevent 'caption too long' error (Telegram limit 1024)
+                display_url = url if len(url) < 100 else url[:100] + "..."
                 await send_and_backup(
                     event.chat_id,
                     output_path,
-                    caption=f"📺 Video ({current}/{total}):\n<code>{html.escape(url)}</code>",
+                    caption=f"📺 Video ({current}/{total}):\n<code>{html.escape(display_url)}</code>",
                     force_document=True,
                     supports_streaming=True,
                     reply_to=event.id,
