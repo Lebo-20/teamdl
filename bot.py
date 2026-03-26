@@ -83,10 +83,12 @@ async def panel_update_loop():
             active_count += 1
             drama = sess.get("drama_info", {}).get("title", "Unknown")
             user_id = sid.split("_")[0]
+            op_type = ls.get('type', 'PROSES')
             
             text += (
                 f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
                 f"📦 <b>Drama:</b> <i>{html.escape(drama)}</i>\n"
+                f"⚙️ <b>Status:</b> {op_type}\n"
                 f"📺 <b>Progress:</b> {ls['done']}/{ls['total']} ({ls['pct']}%)\n"
                 f"⏳ <b>ETA:</b> {ls['eta']} | ⏱️ <b>Durasi:</b> {ls['elapsed']}\n"
                 f"──────────────────────────\n"
@@ -101,9 +103,14 @@ async def panel_update_loop():
         # Update semua panel yang terdaftar (biasanya hanya 1 milik Owner)
         for chat_id, msg in list(panel_messages.items()):
             try:
-                await msg.edit(text, parse_mode='html')
+                if active_count == 0:
+                    # Jika tidak ada proses, hapus pesan panel dan bersihkan daftar
+                    await msg.delete()
+                    panel_messages.pop(chat_id, None)
+                else:
+                    await msg.edit(text, parse_mode='html')
             except Exception:
-                # Jika pesan dihapus user atau error, bersihkan dari daftar
+                # Jika pesan sudah dihapus user atau error lainnya
                 panel_messages.pop(chat_id, None)
                 
         await asyncio.sleep(5)
@@ -585,6 +592,7 @@ async def handle_callback(event):
         uploaded = 0
         failed_up = 0
         title = session['drama_info']['title']
+        up_start_time = time.time()
 
         for idx, filepath in enumerate(files):
             current = idx + 1
@@ -619,6 +627,20 @@ async def handle_callback(event):
                         upload_path = converted
                     except: pass
 
+            # Update Live Status for Panel
+            up_elapsed = int(time.time() - up_start_time)
+            up_pct = int((current / len(files)) * 100)
+            up_eta_sec = int((up_elapsed / current) * (len(files) - current)) if current > 0 else 0
+            
+            session["live_status"] = {
+                "done": current,
+                "total": len(files),
+                "pct": up_pct,
+                "eta": str(timedelta(seconds=up_eta_sec)),
+                "elapsed": str(timedelta(seconds=up_elapsed)),
+                "type": "UPLOAD"
+            }
+
             try:
                 if not os.path.exists(upload_path):
                     raise FileNotFoundError(f"File not found: {upload_path}")
@@ -641,6 +663,9 @@ async def handle_callback(event):
                 if upload_path != filepath and os.path.exists(filepath): os.remove(filepath)
             
             await asyncio.sleep(2)
+
+        # Hapus status monitoring setelah upload selesai
+        session.pop("live_status", None)
 
         # FINAL REPORT CANTIK
         drama_info = session['drama_info']
@@ -802,6 +827,9 @@ async def handle_callback_download(event, session_id):
     status_task = asyncio.create_task(update_status_loop())
     await asyncio.gather(*tasks)
     status_task.cancel()
+    
+    # Hapus status dari panel segera setelah download selesai
+    session.pop("live_status", None)
     
     total_time = int(time.time() - start_time)
     duration_str = str(timedelta(seconds=total_time))
