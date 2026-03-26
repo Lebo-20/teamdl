@@ -940,6 +940,45 @@ async def handle_callback_download(event, session_id):
 
 
 
+@client.on(events.NewMessage(pattern=r'^/(menu|help)(\s+|$)'))
+async def help_menu(event):
+    user_id = event.sender_id
+    is_owner = (user_id == getattr(config_file, 'OWNER_ID', 0))
+    
+    owner_text = ""
+    if is_owner:
+        owner_text = (
+            "\n👑 <b>OWNER COMMANDS:</b>\n"
+            "├ `/panel` - Monitor proses aktif\n"
+            "├ `/update` - Update bot dari GitHub\n"
+            "├ `/restart` - Restart bot langsung\n"
+            "└ `/id` - Cek ID Telegram Anda\n"
+        )
+        
+    text = (
+        "🤖 <b>TEAMDL DOWNLOADER BOT MENU</b>\n"
+        "──────────────────────────\n"
+        "📖 <b>PANDUAN PENGGUNAAN:</b>\n"
+        "\n"
+        "1️⃣ <b>Download Drama:</b>\n"
+        "   Kirimkan file JSON drama (MinuteDrama, Shorten, Loklok, dll).\n"
+        "   Bot akan otomatis mendeteksi dan memberi opsi download.\n\n"
+        "2️⃣ <b>Download via Link:</b>\n"
+        "   Gunakan perintah `/l <link>`.\n"
+        "   Contoh: `/l https://site.com/video.mp4` atau m3u8.\n\n"
+        "3️⃣ <b>Ganti Nama (Rename):</b>\n"
+        "   Kirim file video ke bot, lalu <b>balas (reply)</b>\n"
+        "   pada video tersebut dengan nama baru yang diinginkan.\n\n"
+        "4️⃣ <b>Gabungkan (Merge):</b>\n"
+        "   Kirim 2 file video atau lebih. Bot akan menawarkan\n"
+        "   tombol <i>'Gabungkan'</i> setelah Anda mengirim file ke-2.\n"
+        "──────────────────────────\n"
+        f"{owner_text}"
+        "🚀 <i>Bot ini didesain untuk kemudahan download drama.</i>"
+    )
+    
+    await event.respond(text, parse_mode='html')
+
 @client.on(events.NewMessage(pattern=r'^/panel(\s+|$)'))
 async def monitoring_panel(event):
     owner_id = getattr(config_file, 'OWNER_ID', 0)
