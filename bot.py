@@ -86,11 +86,10 @@ async def panel_update_loop():
             op_type = ls.get('type', 'PROSES')
             
             text += (
-                f"👤 <b>User ID:</b> <code>{user_id}</code>\n"
-                f"📦 <b>Drama:</b> <i>{html.escape(drama)}</i>\n"
-                f"⚙️ <b>Status:</b> {op_type}\n"
-                f"📺 <b>Progress:</b> {ls['done']}/{ls['total']} ({ls['pct']}%)\n"
-                f"⏳ <b>ETA:</b> {ls['eta']} | ⏱️ <b>Durasi:</b> {ls['elapsed']}\n"
+                f"👤 <b>UID:</b> <code>{user_id}</code> | ⚙️ <b>{op_type}</b>\n"
+                f"📦 <b>Drama:</b> <i>{html.escape(drama[:40])}</i>\n"
+                f"📺 <b>Prog:</b> {ls['done']}/{ls['total']} ({ls['pct']}%)\n"
+                f"⏳ <b>ETA:</b> {ls['eta']} | ⏱️ <b>Dur:</b> {ls['elapsed']}\n"
                 f"──────────────────────────\n"
             )
             
@@ -274,8 +273,22 @@ async def handle_rename_reply(event):
     file_path = os.path.join(session_dir, orig_filename)
     
     try:
+        # Register session for monitoring
+        user_sessions[session_id] = {
+            "drama_info": {"title": f"Rename: {new_name}"},
+            "live_status": {"done": 0, "total": 1, "pct": 0, "eta": "...", "elapsed": "0:00:00", "type": "RENAME"}
+        }
+        start_time_rename = time.time()
+
         # Download Progress
         async def dl_progress(current, total):
+            elapsed = int(time.time() - start_time_rename)
+            user_sessions[session_id]["live_status"].update({
+                "done": current, "total": total, 
+                "pct": int((current/total)*100) if total > 0 else 0,
+                "elapsed": str(timedelta(seconds=elapsed))
+            })
+            
             pct = (current / total) * 100
             if int(pct) % 15 == 0 or current == total:
                 try:
@@ -324,6 +337,7 @@ async def handle_rename_reply(event):
     except Exception as e:
         await msg.edit(f"❌ Gagal: {str(e)}")
     finally:
+        user_sessions.pop(session_id, None)
         shutil.rmtree(session_dir, ignore_errors=True)
 
 @client.on(events.NewMessage(pattern=r'^/l(\s+|$)'))
@@ -364,9 +378,17 @@ async def handle_link_command(event):
             )
         except Exception: pass
         
+        batch_session_id = f"batch_{user_id}_{event.id}"
+        if batch_session_id not in user_sessions:
+            user_sessions[batch_session_id] = {
+                "drama_info": {"title": f"Batch Links ({total} items)"},
+                "live_status": {"done": 0, "total": total, "pct": 0, "eta": "...", "elapsed": "0:00:00", "type": "BATCH"}
+            }
+        start_time_batch = time.time()
+
         # Unique session dir for each link
-        batch_session_id = f"{user_id}_{event.id}_{idx}"
-        session_dir = os.path.join(TEMP_DIR, batch_session_id)
+        item_session_id = f"{user_id}_{event.id}_{idx}"
+        session_dir = os.path.join(TEMP_DIR, item_session_id)
         os.makedirs(session_dir, exist_ok=True)
         
         # Simple filename extraction
@@ -407,9 +429,17 @@ async def handle_link_command(event):
             print(f"Error download link {url}: {e}")
             fail_count += 1
         finally:
+            # Update status for panel
+            elapsed = int(time.time() - start_time_batch)
+            user_sessions[batch_session_id]["live_status"].update({
+                "done": idx + 1,
+                "pct": int(((idx + 1) / total) * 100),
+                "elapsed": str(timedelta(seconds=elapsed))
+            })
             shutil.rmtree(session_dir, ignore_errors=True)
             
     # Final report
+    user_sessions.pop(batch_session_id, None)
     final_text = (
         f"✅ <b>DOWNLOAD SELESAI</b>\n"
         f"──────────────────────────\n"
@@ -457,6 +487,13 @@ async def handle_callback(event):
             output_path = os.path.join(session["session_dir"], output_name)
             
             await msg.edit("⚙️ <b>Sedang menggabungkan (lossless)...</b>", parse_mode='html')
+            
+            # Monitoring status
+            session["live_status"] = {
+                "done": 0, "total": 1, "pct": 50, "eta": "Mengerjakan...", 
+                "elapsed": "...", "type": "MERGING"
+            }
+            
             success = await downloader.merge_videos(file_paths, output_path)
             
             if success:
@@ -549,6 +586,11 @@ async def handle_callback(event):
         output_name = f"{title}_Full_Movie.mp4"
         output_path = os.path.join(session['session_dir'], output_name)
         
+        session["live_status"] = {
+            "done": 0, "total": 1, "pct": 50, "eta": "Processing...", 
+            "elapsed": "...", "type": "FULL_MERGE"
+        }
+
         success = await downloader.merge_videos(files, output_path)
         if success:
             await event.edit(f"⬆️ <b>Berhasil menggabungkan!</b>\nUploading: <code>{output_name}</code>", parse_mode='html')
