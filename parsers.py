@@ -45,6 +45,8 @@ def detect_source(data: Any) -> str:
         return "shorttv"
     if "videoList" in data and "isLocked" in data:
         return "reelshort"
+    if "resultCode" in data and "dataResult" in data and "tvInfo" in data.get("dataResult", {}):
+        return "minutedrama"
     return "unknown"
 
 def parse_dotdrama(data: Any) -> dict:
@@ -443,6 +445,8 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_draamabox_list(data, filename)
     elif source_type == "reelshort":
         return parse_reelshort(data, filename)
+    elif source_type == "minutedrama":
+        return parse_minutedrama(data)
     else:
         raise ValueError(f"Unknown source type: {source_type}")
 
@@ -599,4 +603,44 @@ def parse_reelshort(data: dict, filename: str) -> dict:
         "cover": "",
         "total_ep": 1,
         "episodes": episodes
+    }
+
+def parse_minutedrama(data: dict) -> dict:
+    """Parsing format MinuteDrama (minutedrama.com)."""
+    data_result = data.get("dataResult", {})
+    tv_info = data_result.get("tvInfo", {})
+    episodes_raw = tv_info.get("episodesInfos", [])
+    
+    episodes = []
+    for item in episodes_raw:
+        # Prioritas: H264 -> PlayUrl -> Backup
+        url = item.get("signPlayUrlH264") or item.get("signPlayUrl") or item.get("bkSignPlayUrl")
+        
+        # Subtitle Indonesia
+        sub_url = None
+        text_track_info = item.get("textTrack", {})
+        prefix = text_track_info.get("prefix", "")
+        tracks = text_track_info.get("textTracks", [])
+        
+        for track in tracks:
+            # Cari kode bahasa 'id'
+            lang = track.get("languageCode", "").lower()
+            if lang == "id":
+                suffix = track.get("textTrackName", "")
+                if suffix:
+                    sub_url = prefix + suffix
+                break
+                
+        episodes.append({
+            "num": item.get("episodeNum", 0),
+            "url": url,
+            "subtitle": sub_url
+        })
+        
+    return {
+        "title": tv_info.get("title", "Unknown MinuteDrama"),
+        "sinopsis": tv_info.get("desc", ""),
+        "cover": tv_info.get("coverUrl", ""),
+        "total_ep": tv_info.get("episodesCount", len(episodes)),
+        "episodes": sorted(episodes, key=lambda x: x["num"])
     }
