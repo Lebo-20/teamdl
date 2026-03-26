@@ -708,9 +708,11 @@ async def handle_callback_download(event, session_id):
                 
                 # Subtitle
                 sub_url = ep.get('subtitle')
+                sub_fmt = ep.get('sub_format', '').lower() if ep.get('sub_format') else ''
+                
                 if success and sub_url:
-                    # Deteksi format subtitle dari URL (vtt atau srt)
-                    is_vtt = ".vtt" in sub_url.lower() or "mime_type=text_plain" in sub_url
+                    # Deteksi format subtitle dari URL atau Parser (vtt atau srt)
+                    is_vtt = "vtt" in sub_fmt or ".vtt" in sub_url.lower() or "mime_type=text_plain" in sub_url
                     raw_sub_ext = ".vtt" if is_vtt else ".srt"
                     raw_sub_path = os.path.join(session['session_dir'], f"temp_sub_raw_{ep_num}{raw_sub_ext}")
                     sub_path = os.path.join(session['session_dir'], f"temp_sub_{ep_num}.srt")

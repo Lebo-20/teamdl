@@ -499,10 +499,23 @@ def parse_shorttv(data: dict) -> dict:
         # Quality priority: 1080p -> 720p -> 480p
         url = urls.get("video_1080") or urls.get("video_720") or urls.get("video_480")
         
+        # Ambil subtitle jika ada
+        sub_list = item.get("subtitleList", [])
+        sub_url = None
+        sub_format = None
+        for sub in sub_list:
+            if sub.get("language_id") == 23 or sub.get("languageId") == 23 or \
+               "id" in sub.get("subtitleLanguage", "").lower() or \
+               "id" in sub.get("language", "").lower():
+                sub_url = sub.get("url")
+                sub_format = sub.get("format")
+                break
+        
         episodes.append({
             "num": item.get("episodeNumber", 0),
             "url": url,
-            "subtitle": None
+            "subtitle": sub_url,
+            "sub_format": sub_format
         })
         
     return {
@@ -524,15 +537,21 @@ def parse_netshort(data: dict) -> dict:
         # Ambil subtitle Indonesia (language_id 23 = ID)
         sub_list = item.get("subtitleList", [])
         sub_url = None
+        sub_format = None
         for sub in sub_list:
-            if sub.get("language_id") == 23 or "id" in sub.get("subtitleLanguage", "").lower():
+            if sub.get("language_id") == 23 or sub.get("languageId") == 23 or \
+               "id" in sub.get("subtitleLanguage", "").lower() or \
+               "id" in sub.get("language", "").lower() or \
+               sub.get("captionLanguage") in ["in", "id", "ind"]:
                 sub_url = sub.get("url")
+                sub_format = sub.get("format")
                 break
         
         episodes.append({
             "num": item.get("episodeNo", 0),
             "url": url,
-            "subtitle": sub_url
+            "subtitle": sub_url,
+            "sub_format": sub_format
         })
         
     return {
