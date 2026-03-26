@@ -416,11 +416,13 @@ async def handle_link_command(event):
             
         output_path = os.path.join(session_dir, filename)
         
+        error_msg = ""
         try:
             # Download logic
             success = await downloader.download_video_ytdlp(url, output_path)
             if not success:
                 success = await downloader.download_video_ffmpeg(url, output_path)
+                if not success: error_msg = "Download via YTDLP & FFmpeg failed."
                 
             if success and os.path.exists(output_path):
                 # Upload
@@ -437,9 +439,15 @@ async def handle_link_command(event):
             else:
                 fail_count += 1
         except Exception as e:
+            error_msg = str(e)
             print(f"Error download link {url}: {e}")
             fail_count += 1
         finally:
+            if error_msg:
+                # Send error details to user for debugging
+                try: await event.respond(f"❌ <b>Gagal Download ({current}):</b>\n<code>{html.escape(url[:100])}...</code>\n\n📌 <b>Pesan Error:</b>\n<code>{html.escape(error_msg)}</code>", parse_mode='html')
+                except: pass
+                
             # Update status for panel
             elapsed = int(time.time() - start_time_batch)
             user_sessions[batch_session_id]["live_status"].update({
