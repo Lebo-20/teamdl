@@ -57,12 +57,28 @@ def make_progress_bar(current: int, total: int, width: int = 20) -> str:
 async def send_and_backup(chat_id, *args, **kwargs):
     """Kirim file ke user DAN otomatis copy ke channel backup."""
     msg = await client.send_file(chat_id, *args, **kwargs)
-    if msg and BACKUP_CHANNEL_ID and str(chat_id) != str(BACKUP_CHANNEL_ID):
+    
+    # Ambil ID Backup (pastikan Integer)
+    backup_id = get_config('BACKUP_CHANNEL_ID')
+    if backup_id:
         try:
-            # Gunakan file=msg.media untuk mengirim ulang tanpa upload ulang (Fast Copy)
-            await client.send_file(BACKUP_CHANNEL_ID, msg.media, caption=msg.message)
+            backup_id = int(backup_id)
+        except (ValueError, TypeError):
+            backup_id = None
+
+    if msg and backup_id and int(chat_id) != backup_id:
+        try:
+            # Gunakan file=msg.media untuk Fast Copy (tanpa upload ulang)
+            # send_message dengan file= seringkali lebih stabil untuk copy media antar peer
+            await client.send_message(
+                backup_id, 
+                file=msg.media, 
+                caption=msg.message,
+                parse_mode='html'
+            )
         except Exception as e:
-            print(f"Backup Error: {e}")
+            print(f"❌ [BACKUP ERROR] Gagal mengirim ke channel {backup_id}: {e}")
+            print(f"Tips: Pastikan bot sudah jadi Admin di channel backup dan punya izin kirim pesan.")
     return msg
 
 async def panel_update_loop():
