@@ -281,16 +281,20 @@ async def mux_subtitle(video_path: str, sub_path: str, output_ext: str) -> str:
         print(f"Mux async error: {e}")
         return ""
 
-async def merge_videos(video_list: list[str], output_path: str) -> bool:
+async def merge_videos(video_list: list[str], output_path: str, progress_callback=None) -> bool:
     """Gabungkan daftar video menjadi satu file menggunakan metode intermediate TS agar durasi akurat."""
     if not video_list: return False
     
     temp_ts_files = []
     session_dir = os.path.dirname(output_path)
+    total_parts = len(video_list)
     
     try:
         # 1. Konversi setiap MP4 ke TS (Lossless & Cepat)
         for idx, v in enumerate(video_list):
+            if progress_callback:
+                await progress_callback(idx, total_parts, phase="CONVERTING")
+                
             ts_path = os.path.join(session_dir, f"temp_merge_{idx}.ts")
             # Gunakan bitstream filter untuk h264/hevc agar kompatibel
             cmd_ts = [
@@ -308,6 +312,9 @@ async def merge_videos(video_list: list[str], output_path: str) -> bool:
                 temp_ts_files.append(ts_path)
 
         if not temp_ts_files: return False
+
+        if progress_callback:
+            await progress_callback(total_parts, total_parts, phase="MERGING")
 
         # 2. Gabungkan file TS menggunakan protokol concat
         concat_str = "concat:" + "|".join(temp_ts_files)

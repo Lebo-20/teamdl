@@ -486,26 +486,37 @@ async def handle_callback(event):
             output_name = "Merged_Video.mp4"
             output_path = os.path.join(session["session_dir"], output_name)
             
-            await msg.edit("⚙️ <b>Sedang menggabungkan (lossless)...</b>", parse_mode='html')
-            
-            # Monitoring status
-            session["live_status"] = {
-                "done": 0, "total": 1, "pct": 50, "eta": "Mengerjakan...", 
-                "elapsed": "...", "type": "MERGING"
-            }
-            
-            success = await downloader.merge_videos(file_paths, output_path)
+            # progress callback untuk merge
+            async def merge_progress(curr, total, phase):
+                pct = int((curr / total) * 100) if total > 0 else 0
+                if phase == "MERGING": pct = 99 # Hampir selesai saat fase gabung
+                
+                await msg.edit(f"⚙️ <b>Proses Penggabungan:</b>\n{make_progress_bar(curr, total)}\n"
+                              f"📂 Fase: <code>{phase}</code>", parse_mode='html')
+                
+                # Update panel monitoring
+                session["live_status"].update({
+                    "done": curr, "total": total, "pct": pct, "type": f"MERGE_{phase}"
+                })
+
+            success = await downloader.merge_videos(file_paths, output_path, progress_callback=merge_progress)
             
             if success:
-                # Berikan instruksi rename untuk hasil merge
-                # Kita kirim dulu tapi kasih tau bisa di-rename dengan reply
-                await msg.delete()
-                
                 # Ekstrak info
                 thumb_path = os.path.join(session["session_dir"], "thumb.jpg")
                 has_thumb = await downloader.extract_thumbnail(output_path, thumb_path)
                 v_info = await downloader.get_video_info(output_path)
                 
+                # Upload Progress
+                async def up_progress_merge(curr, total):
+                    pct = int((curr / total) * 100)
+                    try:
+                        await msg.edit(f"📤 <b>Uploading Merged Video...</b>\n{make_progress_bar(curr, total)}", parse_mode='html')
+                    except: pass
+                    session["live_status"].update({
+                        "done": curr, "total": total, "pct": pct, "type": "UPLOAD_MERGE"
+                    })
+
                 final_msg = await send_and_backup(
                     event.chat_id,
                     output_path,
@@ -518,9 +529,11 @@ async def handle_callback(event):
                         supports_streaming=True
                     )],
                     supports_streaming=True,
-                    parse_mode='html'
+                    parse_mode='html',
+                    progress_callback=up_progress_merge
                 )
                 # Sesi merge selesai
+                await msg.delete()
                 user_sessions.pop(session_id, None)
                 shutil.rmtree(session["session_dir"], ignore_errors=True)
             else:
@@ -586,14 +599,32 @@ async def handle_callback(event):
         output_name = f"{title}_Full_Movie.mp4"
         output_path = os.path.join(session['session_dir'], output_name)
         
-        session["live_status"] = {
-            "done": 0, "total": 1, "pct": 50, "eta": "Processing...", 
-            "elapsed": "...", "type": "FULL_MERGE"
-        }
+        async def merge_progress_full(curr, total, phase):
+            pct = int((curr / total) * 100) if total > 0 else 0
+            if phase == "MERGING": pct = 99
+            
+            try:
+                await event.edit(f"⚙️ <b>Menggabungkan Episodes ({len(files)} eps):</b>\n{make_progress_bar(curr, total)}\n"
+                                f"📂 Fase: <code>{phase}</code>", parse_mode='html')
+            except: pass
+            
+            session["live_status"].update({
+                "done": curr, "total": total, "pct": pct, "type": f"FULL_MERGE_{phase}"
+            })
 
-        success = await downloader.merge_videos(files, output_path)
+        success = await downloader.merge_videos(files, output_path, progress_callback=merge_progress_full)
+        
         if success:
-            await event.edit(f"⬆️ <b>Berhasil menggabungkan!</b>\nUploading: <code>{output_name}</code>", parse_mode='html')
+            # Upload Progress
+            async def up_progress_full(curr, total):
+                pct = int((curr / total) * 100)
+                try:
+                    await event.edit(f"⬆️ <b>Uploading Full Movie...</b>\n{make_progress_bar(curr, total)}", parse_mode='html')
+                except: pass
+                session["live_status"].update({
+                    "done": curr, "total": total, "pct": pct, "type": "UPLOAD_FULL"
+                })
+
             try:
                 await send_and_backup(
                     event.chat_id,
@@ -601,7 +632,8 @@ async def handle_callback(event):
                     caption=f"🎬 <b>{html.escape(title)}</b>\nFull Episodes Merged ✅",
                     parse_mode='html',
                     force_document=True,
-                    supports_streaming=True
+                    supports_streaming=True,
+                    progress_callback=up_progress_full
                 )
                 # Cleanup setelah berhasil kirim full movie
                 user_sessions.pop(session_id, None)
