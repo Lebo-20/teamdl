@@ -134,7 +134,7 @@ async def start(event):
         return
     await event.respond("Halo! Kirimkan file JSON drama untuk mulai mendownload.")
 
-@client.on(events.NewMessage(func=lambda e: e.document and e.document.mime_type == 'application/json'))
+@client.on(events.NewMessage(func=lambda e: e.document))
 async def handle_document(event):
     user_id = event.sender_id
     if ALLOWED_USERS and user_id not in ALLOWED_USERS:
@@ -143,43 +143,45 @@ async def handle_document(event):
     doc = event.document
     filename = event.file.name
     if not (filename.endswith('.json') or filename.endswith('.m3u8')):
-        await event.respond("❌ Mohon kirimkan file berformat JSON atau M3U8.")
+        # Kita hanya proses JSON atau M3U8 di sini
         return
 
-    # Download JSON
+    # Download File
     os.makedirs(TEMP_DIR, exist_ok=True)
     file_path = os.path.join(TEMP_DIR, filename)
     await event.download_media(file=file_path)
 
     if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
-        await event.respond("❌ File JSON kosong atau gagal didownload.")
+        await event.respond("❌ File kosong atau gagal didownload.")
         return
 
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
             
+        source_type = "unknown"
+        drama_info = None
+        
+        # Coba parse sebagai JSON dulu
         try:
             data = json.loads(content)
             source_type = parsers.detect_source(data)
-            if source_type == "unknown":
-                await event.respond("❌ Format JSON tidak dikenali.")
-                return
-            drama_info = parsers.parse_json_data(data, source_type, filename)
+            if source_type != "unknown":
+                drama_info = parsers.parse_json_data(data, source_type, filename)
         except json.JSONDecodeError:
-            # Jika JSON gagal, cek apakah ini M3U8
-            if "#EXTM3U" in content:
-                source_type = "m3u8_raw"
-                drama_info = parsers.parse_m3u8_content(content, filename)
-            else:
-                await event.respond("❌ <b>Error:</b> File bukan JSON valid atau M3U8 valid.")
-                return
+            pass
             
-    except Exception as e:
-        await event.respond(f"❌ <b>Error Membaca File:</b>\n<code>{e}</code>", parse_mode='html')
-        return
+        # Jika bukan JSON atau tidak dikenal, coba parse sebagai M3U8
+        if source_type == "unknown" and "#EXTM3U" in content:
+            source_type = "m3u8_raw"
+            drama_info = parsers.parse_m3u8_content(content, filename)
             
-        drama_info = parsers.parse_json_data(data, source_type, filename)
+        if not drama_info or source_type == "unknown":
+            await event.respond("❌ Format file tidak dikenali (Bukan JSON Drama atau M3U8 valid).")
+            if os.path.exists(file_path): os.remove(file_path)
+            return
+
+        # Setup Session
         session_id = f"{user_id}_{event.id}"
         session_dir = os.path.join(TEMP_DIR, session_id)
         os.makedirs(session_dir, exist_ok=True)
@@ -206,7 +208,7 @@ async def handle_document(event):
             
         text += (
             f"📺 <b>Total:</b> {drama_info['total_ep']} episode\n"
-            f"📦 <b>Platform:</b> {html.escape(source_type.capitalize())}\n"
+            f"📦 <b>Platform:</b> {html.escape(source_type.upper())}\n"
             f"──────────────────────────\n"
             f"Lanjut download semua episode?"
         )
@@ -219,27 +221,21 @@ async def handle_document(event):
             [Button.inline("❌ Batal", data=f"cancel_{session_id}")]
         ]
         
-        # Kirim Detail Drama (dengan Cover sebagai Foto jika ada)
+        # Kirim Detail Drama
         cover_path = None
         if drama_info.get('cover'):
             temp_cover = os.path.join(session_dir, "cover.jpg")
             if await downloader.download_file(drama_info['cover'], temp_cover):
                 cover_path = temp_cover
 
-        try:
-            if cover_path:
-                await event.respond(text, file=cover_path, buttons=buttons, parse_mode='html')
-                if os.path.exists(cover_path): os.remove(cover_path)
-            else:
-                await event.respond(text, buttons=buttons, parse_mode='html')
-        except Exception as img_err:
-            print(f"Image Send Error: {img_err}")
-            # Fallback ke teks saja jika gambar gagal diproses/dikirim
+        if cover_path:
+            await event.respond(text, file=cover_path, buttons=buttons, parse_mode='html')
+            if os.path.exists(cover_path): os.remove(cover_path)
+        else:
             await event.respond(text, buttons=buttons, parse_mode='html')
-            if cover_path and os.path.exists(cover_path): os.remove(cover_path)
 
     except Exception as e:
-        await event.respond(f"❌ Error: {str(e)}")
+        await event.respond(f"❌ <b>Error:</b> {html.escape(str(e))}", parse_mode='html')
     finally:
         if os.path.exists(file_path): os.remove(file_path)
 
