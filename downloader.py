@@ -155,7 +155,7 @@ async def download_video_ffmpeg(m3u8_url: str, output_path: str, headers: dict |
         print(f"FFmpeg async error: {e}")
         return False
 
-async def download_video_ytdlp(url: str, output_path: str, headers: dict | None = None) -> bool:
+async def download_video_ytdlp(url: str, output_path: str, headers: dict | None = None, lang: str = "all") -> bool:
     """Download video menggunakan yt-dlp dengan optimasi kecepatan (Async)."""
     # Deteksi Referer & Origin secara Dinamis
     parsed_u = urllib.parse.urlparse(url)
@@ -201,9 +201,17 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         "--retries", "10",
         "--all-subs",
         "--embed-subs",
-        "--sub-langs", "id.*,ind.*,en.*,all",
         "--merge-output-format", "mkv"
     ]
+    
+    # Subtitle selection
+    if lang == "none":
+        cmd.extend(["--no-write-subs"])
+    elif lang == "all":
+        cmd.extend(["--sub-langs", "id.*,ind.*,en.*,all"])
+    else:
+        # Match specific language
+        cmd.extend(["--sub-langs", f"{lang}.*"])
     
     # Disable aria2c for proxies and specific domains to improve stability
     is_worker = "workers.dev" in domain or "rishort" in url

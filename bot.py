@@ -389,75 +389,171 @@ async def handle_link_command(event):
             )
         except Exception: pass
         
-        batch_session_id = f"batch_{user_id}_{event.id}"
-        if batch_session_id not in user_sessions:
-            user_sessions[batch_session_id] = {
-                "drama_info": {"title": f"Batch Links ({total} items)"},
-                "live_status": {"done": 0, "total": total, "pct": 0, "eta": "...", "elapsed": "0:00:00", "type": "BATCH"}
-            }
-        start_time_batch = time.time()
-
-        # Unique session dir for each link
-        item_session_id = f"{user_id}_{event.id}_{idx}"
-        session_dir = os.path.join(TEMP_DIR, item_session_id)
-        os.makedirs(session_dir, exist_ok=True)
+        # Step 1: Check available subtitles
+        await summary_msg.edit(f"🔍 <b>Mengecek subtitle untuk:</b>\n<code>{html.escape(url[:100])}...</code>", parse_mode='html')
         
-        # Simple filename extraction
-        parsed_url = urllib.parse.urlparse(url)
-        path = parsed_url.path
-        filename_orig = os.path.basename(path)
-        
-        if not filename_orig or '.' not in filename_orig or len(filename_orig) < 4:
-            filename = f"video_{current}.mkv"
-        else:
-            # Tetap gunakan nama asli tapi pastikan extension mkv dan amankan dari tabrakan
-            name_part = filename_orig.rsplit('.', 1)[0]
-            filename = f"{name_part}_{current}.mkv"
-            
-        output_path = os.path.join(session_dir, filename)
-        
-        error_msg = ""
         try:
-            # Download logic
-            success = await downloader.download_video_ytdlp(url, output_path)
-            if not success:
-                success = await downloader.download_video_ffmpeg(url, output_path)
-                if not success: error_msg = "Download via YTDLP & FFmpeg failed."
-                
-            if success and os.path.exists(output_path):
-                # Upload
-                # TRUNCATE URL in caption to prevent 'caption too long' error (Telegram limit 1024)
-                display_url = url if len(url) < 100 else url[:100] + "..."
-                await send_and_backup(
-                    event.chat_id,
-                    output_path,
-                    caption=f"📺 Video ({current}/{total}):\n<code>{html.escape(display_url)}</code>",
-                    force_document=True,
-                    supports_streaming=True,
-                    reply_to=event.id,
-                    parse_mode='html'
+            import subprocess as _sub
+            # Gunakan yt-dlp --list-subs untuk deteksi cepat
+            # Kita hanya ambil output kodenya saja
+            proc = _sub.run(["yt-dlp", "--list-subs", "--skip-download", url], capture_output=True, text=True, timeout=30)
+            output = proc.stdout
+            
+            # Simple parsing for languages
+            # Format biasanya: "eng      unknown_video" atau "ind      vtt"
+            langs = []
+            lines = output.split('\n')
+            started = False
+            for line in lines:
+                if "Language Formats" in line:
+                    started = True
+                    continue
+                if started and line.strip():
+                    parts = line.split()
+                    if parts:
+                        lang_code = parts[0]
+                        if lang_code not in ["Language", "Formats"] and len(lang_code) <= 10:
+                            langs.append(lang_code)
+
+            # Store in session for callback
+            session_id = f"link_{user_id}_{event.id}_{idx}"
+            user_sessions[session_id] = {
+                "url": url,
+                "langs": langs,
+                "current": current,
+                "total": total,
+                "summary_msg_id": summary_msg.id,
+                "chat_id": event.chat_id,
+                "reply_to": event.id
+            }
+
+            if langs:
+                # Batasi jumlah tombol biar tidak kepanjangan (max 10)
+                display_langs = sorted(list(set(langs)))[:12]
+                buttons = []
+                row = []
+                for l in display_langs:
+                    row.append(Button.inline(f"🌐 {l}", data=f"dl_link_{session_id}_{l}"))
+                    if len(row) == 3:
+                        buttons.append(row)
+                        row = []
+                if row: buttons.append(row)
+                buttons.append([Button.inline("📦 ALL SUBS", data=f"dl_link_{session_id}_all")])
+                buttons.append([Button.inline("🚫 NO SUBS", data=f"dl_link_{session_id}_none")])
+
+                await event.respond(
+                    f"🎯 <b>SUBTITLE DITEMUKAN</b>\n"
+                    f"Silakan pilih bahasa subtitle yang ingin di-embed ke dalam video (Softsub MKV):\n\n"
+                    f"🔗 <code>{html.escape(url[:100])}...</code>",
+                    buttons=buttons,
+                    parse_mode='html',
+                    reply_to=event.id
                 )
-                success_count += 1
+                continue # Tunggu user klik tombol
             else:
-                fail_count += 1
+                # Tidak ada sub, langsung download
+                await perform_link_download(event.chat_id, url, current, total, summary_msg, event.id, "none")
+                success_count += 1
         except Exception as e:
-            error_msg = str(e)
-            print(f"Error download link {url}: {e}")
-            fail_count += 1
-        finally:
-            if error_msg:
-                # Send error details to user for debugging
-                try: await event.respond(f"❌ <b>Gagal Download ({current}):</b>\n<code>{html.escape(url[:100])}...</code>\n\n📌 <b>Pesan Error:</b>\n<code>{html.escape(error_msg)}</code>", parse_mode='html')
-                except: pass
-                
-            # Update status for panel
-            elapsed = int(time.time() - start_time_batch)
-            user_sessions[batch_session_id]["live_status"].update({
-                "done": idx + 1,
-                "pct": int(((idx + 1) / total) * 100),
-                "elapsed": str(timedelta(seconds=elapsed))
-            })
-            shutil.rmtree(session_dir, ignore_errors=True)
+            print(f"Error checking subs for {url}: {e}")
+            # Fallback ke download biasa
+            await perform_link_download(event.chat_id, url, current, total, summary_msg, event.id, "all")
+            success_count += 1
+
+    # Final summary update (jika tidak ada link yang butuh konfirmasi)
+    # Note: flow akan berlanjut di callback handler
+    pass
+
+async def perform_link_download(chat_id, url, current, total, summary_msg, reply_to, lang_choice):
+    """Fungsi pembantu untuk mengeksekusi download link."""
+    user_id = chat_id 
+    session_id = f"dl_temp_{int(time.time())}"
+    session_dir = os.path.join(TEMP_DIR, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    
+    # Simple filename extraction
+    parsed_url = urllib.parse.urlparse(url)
+    path = parsed_url.path
+    filename_orig = os.path.basename(path)
+    
+    if not filename_orig or '.' not in filename_orig or len(filename_orig) < 4:
+        filename = f"video_{current}.mkv"
+    else:
+        name_part = filename_orig.rsplit('.', 1)[0]
+        filename = f"{name_part}_{current}.mkv"
+        
+    output_path = os.path.join(session_dir, filename)
+    
+    error_msg = ""
+    try:
+        # Download logic dengan pilihan bahasa
+        success = await downloader.download_video_ytdlp(url, output_path, lang=lang_choice)
+        if not success:
+            success = await downloader.download_video_ffmpeg(url, output_path)
+            if not success: error_msg = "Download via YTDLP & FFmpeg failed."
+            
+        if success and os.path.exists(output_path):
+            display_url = url if len(url) < 100 else url[:100] + "..."
+            await send_and_backup(
+                chat_id,
+                output_path,
+                caption=f"📺 Video ({current}/{total}):\n<code>{html.escape(display_url)}</code>\n\n✅ Subtitle: {lang_choice}",
+                force_document=True,
+                supports_streaming=True,
+                reply_to=reply_to,
+                parse_mode='html'
+            )
+            return True
+        return False
+    except Exception as e:
+        error_msg = str(e)
+        # Kirim error ke user
+        try: await client.send_message(chat_id, f"❌ <b>Gagal Download:</b>\n<code>{html.escape(url[:100])}...</code>\n\n📌 <b>Error:</b>\n<code>{html.escape(error_msg)}</code>", parse_mode='html')
+        except: pass
+        return False
+    finally:
+        shutil.rmtree(session_dir, ignore_errors=True)
+
+@client.on(events.CallbackQuery(pattern=r'^dl_link_'))
+async def handle_link_sub_callback(event):
+    # Pattern: dl_link_{session_id}_{lang}
+    data = event.data.decode()
+    parts = data.split('_')
+    # session_id = link_{user_id}_{event_id}_{idx}
+    # Di sini kita butuh index yang tepat
+    # parts: [dl, link, link, user, eid, idx, lang] -> ini bakal kepanjangan
+    # Mari kita gunakan index yang aman
+    lang = parts[-1]
+    # Gabungkan sisa parts untuk dapet session_id: link_{user_id}_{event_id}_{idx}
+    session_id = "_".join(parts[2:-1])
+    
+    session = user_sessions.get(session_id)
+    if not session:
+        await event.edit("⚠️ Sesi habis atau expired.")
+        return
+        
+    url = session['url']
+    current = session['current']
+    total = session['total']
+    summary_msg_id = session['summary_msg_id']
+    chat_id = session['chat_id']
+    reply_to = session['reply_to']
+    
+    await event.edit(f"🎬 <b>Memulai Download...</b>\nBahasa: <code>{lang}</code>\n📦 Link: {current}/{total}", parse_mode='html')
+    
+    # Cari summary message
+    summary_msg = await client.get_messages(chat_id, ids=summary_msg_id)
+    
+    # Download
+    success = await perform_link_download(chat_id, url, current, total, summary_msg, reply_to, lang)
+    
+    if success:
+        await event.edit(f"✅ <b>Selesai!</b> Video dikirim di bawah.", parse_mode='html')
+    else:
+        await event.edit(f"❌ <b>Gagal Download.</b> Silakan cek log atau pesan error di bawah.", parse_mode='html')
+        
+    # Hapus sesi
+    user_sessions.pop(session_id, None)
             
     # Final report
     user_sessions.pop(batch_session_id, None)
