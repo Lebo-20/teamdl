@@ -102,12 +102,7 @@ async def panel_update_loop():
         # Update semua panel yang terdaftar (biasanya hanya 1 milik Owner)
         for chat_id, msg in list(panel_messages.items()):
             try:
-                if active_count == 0:
-                    # Jika tidak ada proses, hapus pesan panel dan bersihkan daftar
-                    await msg.delete()
-                    panel_messages.pop(chat_id, None)
-                else:
-                    await msg.edit(text, parse_mode='html')
+                await msg.edit(text, parse_mode='html')
             except Exception:
                 # Jika pesan sudah dihapus user atau error lainnya
                 panel_messages.pop(chat_id, None)
@@ -929,10 +924,11 @@ async def handle_callback_download(event, session_id):
 
 
 
-@client.on(events.NewMessage(pattern='/panel'))
+@client.on(events.NewMessage(pattern=r'^/panel(\s+|$)'))
 async def monitoring_panel(event):
     owner_id = getattr(config_file, 'OWNER_ID', 0)
     if event.sender_id != owner_id:
+        await event.respond("❌ Maaf, perintah ini hanya untuk Owner bot.")
         return
         
     msg = await event.respond("⏳ <b>Menyiapkan Live Monitoring Panel...</b>", parse_mode='html')
