@@ -351,7 +351,7 @@ async def handle_rename_reply(event):
         user_sessions.pop(session_id, None)
         shutil.rmtree(session_dir, ignore_errors=True)
 
-@client.on(events.NewMessage(pattern=r'^/l(\s+|$)'))
+@client.on(events.NewMessage(pattern=r'^/(l|ytdlleech)(\s+|$)'))
 async def handle_link_command(event):
     user_id = event.sender_id
     if ALLOWED_USERS and user_id not in ALLOWED_USERS:
