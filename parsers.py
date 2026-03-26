@@ -43,6 +43,8 @@ def detect_source(data: Any) -> str:
         if "shortPlayEpisodeInfos" in data:
             return "netshort"
         return "shorttv"
+    if "videoList" in data and "isLocked" in data:
+        return "reelshort"
     return "unknown"
 
 def parse_dotdrama(data: Any) -> dict:
@@ -439,6 +441,8 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_netshort(data)
     elif source_type == "draamabox_list":
         return parse_draamabox_list(data, filename)
+    elif source_type == "reelshort":
+        return parse_reelshort(data, filename)
     else:
         raise ValueError(f"Unknown source type: {source_type}")
 
@@ -560,4 +564,39 @@ def parse_netshort(data: dict) -> dict:
         "cover": data.get("shortPlayCover", ""),
         "total_ep": data.get("totalEpisode", len(episodes)),
         "episodes": sorted(episodes, key=lambda x: x["num"])
+    }
+
+def parse_reelshort(data: dict, filename: str) -> dict:
+    """Parsing format ReelShort (crazymaplestudios.com)."""
+    video_list = data.get("videoList", [])
+    
+    # Priority: H264 (lebih kompatibel di TG) -> Kualitas Tertinggi
+    url = None
+    best_quality = -1
+    
+    for v in video_list:
+        q = int(v.get("quality", 0))
+        encode = str(v.get("encode", "")).upper()
+        
+        if q > best_quality:
+            best_quality = q
+            url = v.get("url")
+        elif q == best_quality and encode == "H264":
+            url = v.get("url")
+            
+    # ReelShort biasanya single episode per JSON dari metadata request
+    episodes = [{
+        "num": 1,
+        "url": url,
+        "subtitle": None
+    }]
+    
+    title = filename.replace(".json", "") if filename else "ReelShort Video"
+    
+    return {
+        "title": title,
+        "sinopsis": "",
+        "cover": "",
+        "total_ep": 1,
+        "episodes": episodes
     }
