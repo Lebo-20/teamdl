@@ -20,7 +20,8 @@ import config as config_file
 # Local Modules
 import parsers
 import downloader
-from vigloo_api import vigloo_api # New import
+from vigloo_api import vigloo_api
+from hls_proxy import hls_proxy
 
 # Safely import optional settings
 def get_config(key, default=None):
@@ -1310,4 +1311,5 @@ async def restart_bot(event):
 
 print("Telethon Bot is running... (Press Ctrl+C to stop)")
 client.loop.create_task(panel_update_loop())
+client.loop.create_task(hls_proxy.start()) # Start HLS Proxy service
 client.run_until_disconnected()

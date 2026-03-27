@@ -368,7 +368,27 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
             print(f"Retrying YTDLP with Proxy: {auto_proxy} UA: {new_ua}")
             if await execute_ytdlp(proxy_cmd):
                 return True
-                    
+
+    # FINAL FALLBACK: Local HLS Proxy (Khusus m3u8)
+    if ".m3u8" in url or "m3u8" in url.lower():
+        print("Trying final fallback with local HLS Proxy...")
+        proxy_video_url = f"http://localhost:8001/proxy?url={urllib.parse.quote(url)}"
+        
+        # Gunakan command asli (tanpa proxy lama) tapi ganti URL-nya
+        final_cmd = list(base_cmd)
+        # Update URL di command list
+        for idx, val in enumerate(final_cmd):
+            if val == url:
+                final_cmd[idx] = proxy_video_url
+                break
+        else:
+            # Fallback jika tidak ketemu di list
+            final_cmd[-1] = proxy_video_url
+            
+        print(f"Retrying with Local HLS Proxy: {proxy_video_url}")
+        if await execute_ytdlp(final_cmd):
+            return True
+                
     return False
 
 async def burn_subtitle(video_path: str, sub_path: str) -> Optional[str]:
