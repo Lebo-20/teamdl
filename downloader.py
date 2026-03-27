@@ -18,6 +18,7 @@ async def download_file(url: str, output_path: str, headers: Optional[Dict[str, 
     elif "reelshort.com" in url or "crazymaplestudios.com" in url: referer = "https://www.reelshort.com/"
     elif "vigloo.com" in url: referer = "https://www.vigloo.com/"
     elif "rishort.workers.dev" in url: referer = "https://hls-proxy.rishort.workers.dev/"
+    elif "flickreels.com" in url: referer = "https://www.flickreels.com/"
     
     parsed = urllib.parse.urlparse(referer)
     origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -189,10 +190,12 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         referer = "https://www.vigloo.com/"
     elif "rishort.workers.dev" in url:
         referer = "https://hls-proxy.rishort.workers.dev/"
+    elif "flickreels.com" in url:
+        referer = "https://www.flickreels.com/"
         
     # Gunakan User-Agent Mobile agar lebih lancar, Desktop untuk Worker Proxy
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    if "vigloo.com" in url or "reelshort.com" in url:
+    if "vigloo.com" in url or "reelshort.com" in url or "flickreels.com" in url:
         ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     
     cmd = [

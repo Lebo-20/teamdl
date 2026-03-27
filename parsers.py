@@ -226,8 +226,8 @@ def get_flikreels_url(episode: dict) -> str:
     parsed = urllib.parse.urlparse(hls_url)
     qs = urllib.parse.parse_qs(parsed.query)
     
-    # Ambil token dari param '?verify=' atau '?token='
-    verify_token = qs.get("verify", [None])[0] or qs.get("token", [None])[0]
+    # Ambil token dari param '?verify=' atau '?token=' atau '?atk='
+    verify_token = qs.get("verify", [None])[0] or qs.get("token", [None])[0] or qs.get("atk", [None])[0]
     
     if origin_path and verify_token:
         # Jika origin_path sudah berupa URL penuh
