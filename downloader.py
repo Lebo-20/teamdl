@@ -351,10 +351,21 @@ async def merge_videos(video_list: list[str], output_path: str, progress_callbac
                 await progress_callback(idx, total_parts, phase="CONVERTING")
                 
             ts_path = os.path.join(session_dir, f"temp_merge_{idx}.ts")
+            
+            # Deteksi codec untuk bitstream filter yang tepat
+            v_info = await get_video_info(v)
+            v_codec = v_info.get("codec", "h264")
+            bsf = "h264_mp4toannexb"
+            if "hevc" in v_codec or "h265" in v_codec:
+                bsf = "hevc_mp4toannexb"
+            
             # Gunakan bitstream filter untuk h264/hevc agar kompatibel
+            # Tambahkan -sn agar abaikan subtitle saat konversi ke TS (mencegah error)
             cmd_ts = [
                 "ffmpeg", "-y", "-i", v,
-                "-c", "copy", "-bsf:v", "h264_mp4toannexb", 
+                "-map", "0:v:0", "-map", "0:a:0", # Ambil video & audio pertama saja
+                "-c", "copy", "-bsf:v", bsf, 
+                "-sn", # Skip subtitle agar tidak error saat ke mpegts
                 "-f", "mpegts", ts_path
             ]
             process = await asyncio.create_subprocess_exec(
@@ -420,7 +431,7 @@ async def get_video_info(video_path: str) -> dict:
     """Ambil informasi durasi, lebar, dan tinggi video menggunakan ffprobe."""
     import json
     cmd = [
-        "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=duration,width,height",
+        "ffprobe", "-v", "error", "-show_entries", "format=duration:stream=duration,width,height,codec_name,codec_type",
         "-of", "json", video_path
     ]
     try:
@@ -442,10 +453,18 @@ async def get_video_info(video_path: str) -> dict:
             
         duration = float(duration_raw) if duration_raw else 0
         
+        # 4. Deteksi Codec
+        codec = "h264"
+        for s in streams:
+            if s.get("codec_type") == "video":
+                codec = s.get("codec_name", "h264")
+                break
+                
         info = {
             "duration": int(duration),
             "width": 0,
-            "height": 0
+            "height": 0,
+            "codec": codec
         }
         
         for s in streams:
