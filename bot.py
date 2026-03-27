@@ -8,13 +8,19 @@ import shutil
 import urllib.parse
 import re
 import time
+import math
 from datetime import timedelta
 from typing import Any
 
 # Telethon Imports
 from telethon import TelegramClient, events, Button
-from telethon.tl.types import DocumentAttributeVideo
+from downloader import DocumentAttributeVideo # Changed from telethon.tl.types
 import config as config_file
+
+# Local Modules
+import parsers
+import downloader
+from vigloo_api import vigloo_api # New import
 
 # Safely import optional settings
 def get_config(key, default=None):
@@ -367,6 +373,37 @@ async def handle_rename_reply(event):
         user_sessions.pop(session_id, None)
         shutil.rmtree(session_dir, ignore_errors=True)
 
+@client.on(events.NewMessage(pattern=r'^/vigloo(\s+|$)(.*)'))
+async def handle_vigloo_search(event):
+    user_id = event.sender_id
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        return
+        
+    query = event.pattern_match.group(2).strip()
+    if not query:
+        await event.respond("❌ Gunakan: `/vigloo Judul Drama` untuk mencari drama.")
+        return
+
+    msg = await event.respond(f"🔍 <b>Mencari:</b> <code>{html.escape(query)}</code>...", parse_mode='html')
+    
+    try:
+        results = await vigloo_api.search(query)
+        if not results:
+            await msg.edit("❌ Drama tidak ditemukan.")
+            return
+
+        text = f"🎯 <b>Hasil Pencarian Vigloo:</b>\n"
+        buttons = []
+        for i, res in enumerate(results[:8]): # Ambil 8 hasil teratas
+            title = res.get('name', 'Unknown')
+            program_id = res.get('id')
+            text += f"{i+1}. <b>{html.escape(title)}</b>\n"
+            buttons.append([Button.inline(f"🎬 {title[:20]}...", data=f"vigloo_view_{program_id}")])
+
+        await msg.edit(text, buttons=buttons, parse_mode='html')
+    except Exception as e:
+        await msg.edit(f"❌ Error API: {e}")
+
 @client.on(events.NewMessage(pattern=r'^/(l|ytdlleech)(\s+|$)'))
 async def handle_link_command(event):
     user_id = event.sender_id
@@ -611,7 +648,55 @@ async def handle_callback(event):
     user_id = event.sender_id
     data = event.data.decode('utf-8')
     
-    if data.startswith("do_merge_"):
+    if data.startswith("vigloo_view_"):
+        program_id = data.split("vigloo_view_")[1]
+        msg = await event.edit("⏳ <b>Mengambil detail drama...</b>", parse_mode='html')
+        
+        detail = await vigloo_api.get_drama_detail(program_id)
+        if not detail:
+            await msg.edit("❌ Gagal mengambil detail drama.")
+            return
+
+        session_id = f"vg_{user_id}_{event.id}"
+        user_sessions[session_id] = {
+            "drama_info": detail,
+            "source": f"vigloo_api",
+            "session_dir": os.path.join(TEMP_DIR, session_id),
+            "downloaded": [],
+            "failed_list": [],
+            "format": "MP4"
+        }
+        os.makedirs(user_sessions[session_id]["session_dir"], exist_ok=True)
+
+        text = (
+            f"🎬 <b>{html.escape(detail['title'])}</b>\n"
+            f"──────────────────────────\n"
+            f"📖 <b>Sinopsis:</b>\n<i>{html.escape(detail['sinopsis'][:400])}{'...' if len(detail['sinopsis']) > 400 else ''}</i>\n\n"
+            f"📺 <b>Total:</b> {detail['total_ep']} episode\n"
+            f"📦 <b>Platform:</b> VIGLOO API (captain.sapimu.au)\n"
+            f"──────────────────────────\n"
+            f"Lanjut download semua episode?"
+        )
+        
+        buttons = [
+            [
+                Button.inline("🎬 Softsub (MKV)", data=f"sub_soft_{session_id}"),
+                Button.inline("🎞️ Hardsub (Wait)", data=f"sub_hard_{session_id}")
+            ],
+            [Button.inline("❌ Batal", data=f"cancel_{session_id}")]
+        ]
+
+        if detail.get('cover'):
+            temp_cover = os.path.join(user_sessions[session_id]["session_dir"], "cover.jpg")
+            if await downloader.download_file(detail['cover'], temp_cover):
+                await event.delete()
+                await client.send_file(event.chat_id, temp_cover, caption=text, buttons=buttons, parse_mode='html')
+                if os.path.exists(temp_cover): os.remove(temp_cover)
+                return
+
+        await event.edit(text, buttons=buttons, parse_mode='html')
+
+    elif data.startswith("do_merge_"):
         user_id = data.split("do_merge_")[1]
         session_id = f"merge_{user_id}"
         session = user_sessions.get(session_id)
@@ -651,9 +736,10 @@ async def handle_callback(event):
                               f"📂 Fase: <code>{phase}</code>", parse_mode='html')
                 
                 # Update panel monitoring
-                session["live_status"].update({
-                    "done": curr, "total": total, "pct": pct, "type": f"MERGE_{phase}"
-                })
+                if "live_status" in session:
+                    session["live_status"].update({
+                        "done": curr, "total": total, "pct": pct, "type": f"MERGE_{phase}"
+                    })
 
             success = await downloader.merge_videos(file_paths, output_path, progress_callback=merge_progress)
             
@@ -950,6 +1036,16 @@ async def handle_callback_download(event, session_id):
                     cookies = ep.get('cookies', {})
                     headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in cookies.items()])} if cookies else {}
                     success = await downloader.download_video_ytdlp(url, output_path, headers)
+                elif source == "vigloo_api":
+                    # Fetch URL on-the-fly dari API (agar token tidak expired)
+                    data = await vigloo_api.get_stream_url(ep.get('seasonId'), ep_num)
+                    if data:
+                        v_url = data.get('url')
+                        cookies = data.get('cookies', {})
+                        headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in cookies.items()])} if cookies else {}
+                        success = await downloader.download_video_ytdlp(v_url, output_path, headers)
+                    else:
+                        success = False
                 else:
                     success = await downloader.download_video_ytdlp(url, output_path)
                     
