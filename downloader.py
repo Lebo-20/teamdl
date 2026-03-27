@@ -5,6 +5,7 @@ import asyncio
 import urllib.parse
 from typing import Dict, Optional
 import config
+from proxy_manager import proxy_manager
 
 async def download_file(url: str, output_path: str, headers: Optional[Dict[str, str]] = None) -> bool:
     """Download file biasa (subtitles, mp4 direct)."""
@@ -38,17 +39,38 @@ async def download_file(url: str, output_path: str, headers: Optional[Dict[str, 
         default_headers.update(headers)
         
     try:
+        # Default proxy dari config
         proxy = getattr(config, 'HTTP_PROXY', None)
+        
         async with aiohttp.ClientSession(headers=default_headers) as session:
             async with session.get(url, timeout=300, proxy=proxy) as response:
-                response.raise_for_status()
-                with open(output_path, 'wb') as f:
-                    while True:
-                        chunk = await response.content.read(8192)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-        return True
+                if response.status == 200:
+                    with open(output_path, 'wb') as f:
+                        while True:
+                            chunk = await response.content.read(8192)
+                            if not chunk: break
+                            f.write(chunk)
+                    return True
+                    
+        # Fallback to Auto Proxy
+        if getattr(config, 'USE_AUTO_PROXY', False):
+            print("Download failed, retrying with free proxy...")
+            for i in range(3): # Coba 3 kali dengan proxy berbeda
+                auto_proxy = await proxy_manager.get_random_proxy()
+                if not auto_proxy: break
+                print(f"Attempting with Proxy: {auto_proxy}")
+                try:
+                    async with aiohttp.ClientSession(headers=default_headers) as session:
+                        async with session.get(url, timeout=120, proxy=auto_proxy) as response:
+                            if response.status == 200:
+                                with open(output_path, 'wb') as f:
+                                    while True:
+                                        chunk = await response.content.read(8192)
+                                        if not chunk: break
+                                        f.write(chunk)
+                                return True
+                except: pass
+        return False
     except Exception as e:
         print(f"Error download {url}: {e}")
         return False
@@ -68,7 +90,7 @@ async def download_aria2(url: str, output_path: str, headers: Optional[Dict[str,
     dir_name = os.path.dirname(output_path)
     file_name = os.path.basename(output_path)
 
-    cmd = [
+    base_cmd = [
         "aria2c", 
         "--console-log-level=warn",
         "-x", "16", 
@@ -80,35 +102,58 @@ async def download_aria2(url: str, output_path: str, headers: Optional[Dict[str,
         "--referer", referer,
     ]
 
-    proxy = getattr(config, 'HTTP_PROXY', None)
-    if proxy:
-        cmd.append(f"--all-proxy={proxy}")
-
-    cmd.append(url)
-
     if headers:
         for k, v in headers.items():
-            cmd.extend(["--header", f"{k}: {v}"])
+            base_cmd.extend(["--header", f"{k}: {v}"])
             
-    try:
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
-        )
-        await process.communicate()
-        
-        # Cek apakah file benar-benar ada dan ukurannya masuk akal
-        if process.returncode == 0 and os.path.exists(output_path):
-            if os.path.getsize(output_path) > 1024 * 512: # Minimal 512KB (bukan playlist m3u8)
+    base_cmd.append(url)
+
+    # Function to execute aria2c and check result
+    async def execute_aria2(cmd_list):
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *cmd_list,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+            await process.communicate()
+            
+            # Cek apakah file benar-benar ada dan ukurannya masuk akal
+            if process.returncode == 0 and os.path.exists(output_path):
+                if os.path.getsize(output_path) > 1024 * 512: # Minimal 512KB (bukan playlist m3u8)
+                    return True
+                else:
+                    print(f"Warning: File too small ({os.path.getsize(output_path)} bytes), possible playlist or error page.")
+                    if os.path.exists(output_path): os.remove(output_path)
+            return False
+        except Exception as e:
+            print(f"Aria2 error: {e}")
+            return False
+
+    # Initial attempt with configured proxy
+    current_cmd = list(base_cmd)
+    proxy = getattr(config, 'HTTP_PROXY', None)
+    if proxy:
+        current_cmd.insert(-1, f"--all-proxy={proxy}") # Insert before URL
+    
+    if await execute_aria2(current_cmd):
+        return True
+
+    # Fallback to Auto Proxy
+    if getattr(config, 'USE_AUTO_PROXY', False):
+        print("Aria2 download failed, retrying with free proxy...")
+        for i in range(3): # Coba 3 kali dengan proxy berbeda
+            auto_proxy = await proxy_manager.get_random_proxy()
+            if not auto_proxy: break
+            print(f"Attempting Aria2 with Proxy: {auto_proxy}")
+            
+            proxy_cmd = list(base_cmd)
+            proxy_cmd.insert(-1, f"--all-proxy={auto_proxy}") # Insert before URL
+            
+            if await execute_aria2(proxy_cmd):
                 return True
-            else:
-                print(f"Warning: File too small ({os.path.getsize(output_path)} bytes), possible playlist or error page.")
-                if os.path.exists(output_path): os.remove(output_path)
-        return False
-    except Exception as e:
-        print(f"Aria2 error: {e}")
-        return False
+    
+    return False
 
 async def download_video_ffmpeg(m3u8_url: str, output_path: str, headers: dict | None = None) -> bool:
     """Download video dari m3u8 menggunakan ffmpeg (Async)."""
@@ -198,7 +243,7 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
     if "vigloo.com" in url or "reelshort.com" in url or "flickreels.com" in url:
         ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
     
-    cmd = [
+    base_cmd = [
         "yt-dlp", "--no-warnings", 
         "--user-agent", ua, 
         "--referer", referer,
@@ -221,51 +266,78 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
     
     # Subtitle selection
     if lang == "none":
-        cmd.extend(["--no-write-subs"])
+        base_cmd.extend(["--no-write-subs"])
     elif lang == "all":
-        cmd.extend(["--write-subs", "--sub-langs", "id.*,ind.*,en.*,all"])
+        base_cmd.extend(["--write-subs", "--sub-langs", "id.*,ind.*,en.*,all"])
     else:
         # Match specific language (e.g. ind, eng)
-        cmd.extend(["--write-subs", "--sub-langs", f"{lang}.*"])
+        base_cmd.extend(["--write-subs", "--sub-langs", f"{lang}.*"])
     
     # Disable aria2c for proxies and specific domains to improve stability
     is_worker = "workers.dev" in domain or "rishort" in url
     if not is_worker:
-        cmd.extend([
+        base_cmd.extend([
             "--external-downloader", "aria2c", 
             "--external-downloader-args", "aria2c:-x 16 -s 16 -k 1M"
         ])
     
-    cmd.extend(["-f", "bestvideo+bestaudio/best"])
+    base_cmd.extend(["-f", "bestvideo+bestaudio/best"])
     
     # Tambahkan impersonate jika yt-dlp modern (opsional)
-    # cmd.extend(["--impersonate", "chrome"])
+    # base_cmd.extend(["--impersonate", "chrome"])
     
     if headers:
         for k, v in headers.items():
-            cmd.extend(["--add-header", f"{k}: {v}"])
+            base_cmd.extend(["--add-header", f"{k}: {v}"])
     
+    base_cmd.extend(["-o", output_path, url])
+
+    # Function to execute yt-dlp and check result
+    async def execute_ytdlp(cmd_list):
+        try:
+            process = await asyncio.create_subprocess_exec(*cmd_list)
+            await process.communicate()
+            
+            # Cek apakah file benar-benar ada dan ukurannya masuk akal
+            if os.path.exists(output_path):
+                if os.path.getsize(output_path) > 1024 * 512: # Minimal 512KB
+                    return True
+                else:
+                    print(f"Warning: yt-dlp output too small ({os.path.getsize(output_path)} bytes).")
+                    if os.path.exists(output_path): os.remove(output_path)
+            return False
+        except Exception as e:
+            print(f"YT-DLP async error: {e}")
+            return False
+
+    # Initial attempt with configured proxy
+    current_cmd = list(base_cmd)
     proxy = getattr(config, 'HTTP_PROXY', None)
     if proxy:
-        cmd.extend(["--proxy", proxy])
-        
-    cmd.extend(["-o", output_path, url])
+        current_cmd.insert(-2, "--proxy") # Insert before -o
+        current_cmd.insert(-2, proxy)
     
-    try:
-        process = await asyncio.create_subprocess_exec(*cmd)
-        await process.communicate()
-        
-        # Cek apakah file benar-benar ada dan ukurannya masuk akal
-        if os.path.exists(output_path):
-            if os.path.getsize(output_path) > 1024 * 512: # Minimal 512KB
+    if await execute_ytdlp(current_cmd):
+        return True
+            
+    # Jika gagal & USE_AUTO_PROXY aktif, coba lagi dengan proxy random
+    if getattr(config, 'USE_AUTO_PROXY', False):
+        print("YTDLP failed, retrying with auto-proxy...")
+        for i in range(2): # Coba 2 kali saja agar tidak kelamaan
+            auto_proxy = await proxy_manager.get_random_proxy()
+            if not auto_proxy: break
+            
+            # Copy cmd & ganti proxy-nya
+            proxy_cmd = list(base_cmd)
+            # Sisipkan --proxy ke list command
+            proxy_cmd.insert(-2, "--proxy") # Insert before -o
+            proxy_cmd.insert(-2, auto_proxy)
+            
+            print(f"Retrying YTDLP with Proxy: {auto_proxy}")
+            if await execute_ytdlp(proxy_cmd):
                 return True
-            else:
-                print(f"Warning: yt-dlp output too small ({os.path.getsize(output_path)} bytes).")
-                if os.path.exists(output_path): os.remove(output_path)
-        return False
-    except Exception as e:
-        print(f"yt-dlp async error: {e}")
-        return False
+                    
+    return False
 
 async def burn_subtitle(video_path: str, sub_path: str) -> Optional[str]:
     """Hardsub subtitle ke video (Re-encoding) dengan efisiensi tinggi (720p)."""
