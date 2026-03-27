@@ -388,8 +388,12 @@ async def handle_vigloo_search(event):
     
     try:
         results = await vigloo_api.search(query)
+        if results is None:
+            await msg.edit("❌ <b>Gagal mengakses API Vigloo.</b>\nPastikan <code>VIGLOO_TOKEN</code> di <code>config.py</code> sudah benar dan tidak expired.", parse_mode='html')
+            return
+            
         if not results:
-            await msg.edit("❌ Drama tidak ditemukan.")
+            await msg.edit("❌ Drama tidak ditemukan. Coba gunakan judul dalam bahasa Inggris atau kata kunci lain.")
             return
 
         text = f"🎯 <b>Hasil Pencarian Vigloo:</b>\n"
