@@ -14,7 +14,7 @@ from typing import Any
 
 # Telethon Imports
 from telethon import TelegramClient, events, Button
-from downloader import DocumentAttributeVideo # Changed from telethon.tl.types
+from telethon.tl.types import DocumentAttributeVideo
 import config as config_file
 
 # Local Modules
