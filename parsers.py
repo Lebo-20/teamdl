@@ -54,6 +54,8 @@ def detect_source(data: Any) -> str:
         return "minutedrama"
     if "data" in data and isinstance(data["data"], dict) and "meta" in data["data"] and "shorten.watch" in str(data):
         return "shorten"
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "raw" in data[0]:
+        return "flickreels_array"
     return "unknown"
 
 def parse_dotdrama(data: Any) -> dict:
@@ -191,7 +193,31 @@ def parse_dramawave(data: Any, is_direct: bool = False) -> dict:
 def get_flikreels_url(episode: dict) -> str:
     hls_url = episode.get("hls_url", "")
     origin_path = episode.get("origin_down_url", "")
+    video_url = episode.get("videoUrl", "")
     
+    # Jika sudah ada videoUrl direct, gunakan itu
+    if video_url: return video_url
+
+    # Reconstruct dari chapter_cover jika hls_url kosong
+    if not hls_url:
+        cover = episode.get("chapter_cover", "")
+        chapter_id = episode.get("chapter_id", "")
+        
+        if cover and "verify=" in cover:
+            import urllib.parse
+            parsed = urllib.parse.urlparse(cover)
+            qs = urllib.parse.parse_qs(parsed.query)
+            verify_token = qs.get("verify", [None])[0]
+            
+            if verify_token:
+                # Pola path biasanya /playlet-hls/ID.m3u8 
+                # atau jika dari cover, ganti path cover ke path hls
+                if "/playlet-hls-cover/" in parsed.path:
+                    new_path = parsed.path.replace("/playlet-hls-cover/", "/playlet-hls/").replace(".webp", ".m3u8")
+                    return f"{parsed.scheme}://{parsed.netloc}{new_path}?verify={verify_token}"
+                elif chapter_id:
+                    return f"{parsed.scheme}://{parsed.netloc}/playlet-hls/{chapter_id}.m3u8?verify={verify_token}"
+
     if not hls_url:
         return "" # Terkunci / kosong
         
@@ -403,8 +429,8 @@ def parse_dramaflickreels(data: Any) -> dict:
         raw = item.get("raw", {})
         episodes.append({
             "num": raw.get("chapter_num", item.get("index", 0) + 1),
-            "name": raw.get("chapter_title") or item.get("name", ""),
-            "url": raw.get("videoUrl"),
+            "name": raw.get("chapter_title") or item.get("name", f"EP {raw.get('chapter_num')}"),
+            "url": get_flikreels_url(raw),
             "is_lock": raw.get("is_lock", 0),
             "subtitle": None
         })
@@ -481,6 +507,8 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_minutedrama(data)
     elif source_type == "shorten":
         return parse_shorten(data)
+    elif source_type == "flickreels_array":
+        return parse_flickreels_array(data, filename)
     else:
         raise ValueError(f"Unknown source type: {source_type}")
 
@@ -771,4 +799,40 @@ def parse_m3u8_content(content: str, filename: str) -> dict:
             "url": video_url,
             "subtitle": sub_url
         }]
+    }
+
+def parse_flickreels_array(data: List[dict], filename: str = "") -> dict:
+    """Parsing format array of episode objects (dari JSON user)."""
+    episodes = []
+    title = "Unknown FlickReels"
+    cover = ""
+    
+    for item in data:
+        raw = item.get("raw", {})
+        if not raw: continue
+        
+        if not cover: cover = raw.get("chapter_cover", "")
+        
+        # Coba ambil judul dari name "Title-EP.XX"
+        name = item.get("name", "")
+        if "-" in name and title == "Unknown FlickReels":
+            title = name.split("-")[0]
+
+        episodes.append({
+            "num": raw.get("chapter_num", item.get("index", 0) + 1),
+            "name": raw.get("chapter_title") or item.get("name", ""),
+            "url": get_flikreels_url(raw),
+            "is_lock": raw.get("is_lock", 0),
+            "subtitle": None
+        })
+        
+    if filename and title == "Unknown FlickReels":
+        title = filename.replace(".json", "")
+        
+    return {
+        "title": title,
+        "sinopsis": data[0].get("raw", {}).get("introduce", "") if data else "",
+        "cover": cover,
+        "total_ep": len(episodes),
+        "episodes": sorted(episodes, key=lambda x: x["num"])
     }

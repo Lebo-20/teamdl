@@ -4,6 +4,7 @@ import aiohttp # type: ignore
 import asyncio
 import urllib.parse
 from typing import Dict, Optional
+import config
 
 async def download_file(url: str, output_path: str, headers: Optional[Dict[str, str]] = None) -> bool:
     """Download file biasa (subtitles, mp4 direct)."""
@@ -36,8 +37,9 @@ async def download_file(url: str, output_path: str, headers: Optional[Dict[str, 
         default_headers.update(headers)
         
     try:
+        proxy = getattr(config, 'HTTP_PROXY', None)
         async with aiohttp.ClientSession(headers=default_headers) as session:
-            async with session.get(url, timeout=300) as response:
+            async with session.get(url, timeout=300, proxy=proxy) as response:
                 response.raise_for_status()
                 with open(output_path, 'wb') as f:
                     while True:
@@ -75,8 +77,13 @@ async def download_aria2(url: str, output_path: str, headers: Optional[Dict[str,
         "--out", file_name,
         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "--referer", referer,
-        url
     ]
+
+    proxy = getattr(config, 'HTTP_PROXY', None)
+    if proxy:
+        cmd.append(f"--all-proxy={proxy}")
+
+    cmd.append(url)
 
     if headers:
         for k, v in headers.items():
@@ -127,7 +134,11 @@ async def download_video_ffmpeg(m3u8_url: str, output_path: str, headers: dict |
     header_str = "".join([f"{k}: {v}\r\n" for k, v in final_headers.items()])
     cmd.extend(["-headers", header_str])
         
-    # Optimasi: threads 0 (auto), copy streaming
+    # Proxy support for FFmpeg
+    proxy = getattr(config, 'HTTP_PROXY', None)
+    if proxy:
+        cmd.extend(["-http_proxy", proxy])
+        
     cmd.extend([
         "-threads", "0",
         "-i", m3u8_url,
@@ -230,6 +241,10 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
     if headers:
         for k, v in headers.items():
             cmd.extend(["--add-header", f"{k}: {v}"])
+    
+    proxy = getattr(config, 'HTTP_PROXY', None)
+    if proxy:
+        cmd.extend(["--proxy", proxy])
         
     cmd.extend(["-o", output_path, url])
     
