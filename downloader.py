@@ -258,6 +258,8 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
         referer = "https://hls-proxy.rishort.workers.dev/"
     elif "flickreels.com" in url:
         referer = "https://www.flickreels.com/"
+    elif "onfilom.com" in url:
+        referer = "https://www.shorttv.live/"
         
     # Gunakan User-Agent Mobile agar lebih lancar, Desktop untuk Worker Proxy
     ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
