@@ -30,12 +30,6 @@ def detect_source(data: Any) -> str:
         return "goodshort"
     if "code" in data and "play_url" in data.get("data", {}):
         return "meloshort"
-    if "status" in data and "payload" in data:
-        payload = data.get("payload", {})
-        if "url" in payload and "vigloo" in str(payload.get("url")):
-            return "vigloo"
-        if "drama" in payload and "episodes" in payload:
-            return "vigloo"
     if "data" in data and "episodes" in data.get("data", {}) and "h264" in str(data):
         return "stardust"
     if "id" in data and "episode_list" in data and "external_audio_h264_m3u8" in str(data):
@@ -339,45 +333,6 @@ def parse_meloshort(data: dict) -> dict:
         "episodes": episodes
     }
 
-def parse_vigloo(data: dict, filename: str) -> dict:
-    payload = data.get("payload", {})
-    drama = payload.get("drama", {})
-    
-    # Handle single episode format
-    if "url" in payload:
-        sub_url = _get_indonesian_sub(payload.get("subtitles", []), "vigloo")
-        episodes = [{
-            "num": 1,
-            "url": payload.get("url"),
-            "cookies": payload.get("cookies", {}),
-            "subtitle": sub_url
-        }]
-        title = drama.get("title") or filename.replace(".json", "") or "Unknown Vigloo"
-    # Handle multi episode format
-    elif "episodes" in payload:
-        episodes_raw = payload.get("episodes", [])
-        episodes = []
-        for item in episodes_raw:
-            sub_url = _get_indonesian_sub(item.get("subtitles", []), "vigloo")
-            
-            episodes.append({
-                "num": item.get("episodeNumber", 0) or item.get("number", 0),
-                "url": item.get("videoUrl") or item.get("url"),
-                "cookies": item.get("cookies", payload.get("cookies", {})),
-                "subtitle": sub_url
-            })
-        title = drama.get("title", "Unknown Vigloo")
-    else:
-        episodes = []
-        title = "Unknown Vigloo"
-    
-    return {
-        "title": title,
-        "sinopsis": drama.get("desc") or drama.get("synopsis") or "",
-        "cover": drama.get("poster") or drama.get("cover") or "",
-        "total_ep": len(episodes),
-        "episodes": sorted(episodes, key=lambda x: x["num"])
-    }
 
 def parse_stardust(data: dict) -> dict:
     info = data.get("data", {})
@@ -485,8 +440,6 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_goodshort(data, filename)
     elif source_type == "meloshort":
         return parse_meloshort(data)
-    elif source_type == "vigloo":
-        return parse_vigloo(data, filename)
     elif source_type == "stardust":
         return parse_stardust(data)
     elif source_type == "freereels":
