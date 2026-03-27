@@ -150,10 +150,8 @@ async def handle_document(event):
     doc = event.document
     filename = event.file.name
     if not (filename.endswith('.json') or filename.endswith('.m3u8')):
-        # Kita hanya proses JSON atau M3U8 di sini
         return
 
-    # Download File
     os.makedirs(TEMP_DIR, exist_ok=True)
     file_path = os.path.join(TEMP_DIR, filename)
     await event.download_media(file=file_path)
@@ -163,9 +161,28 @@ async def handle_document(event):
         return
 
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        # Gunakan errors='replace' untuk menghindari crash pada karakter aneh
+        with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
             
+        await process_content(event, content, filename, user_id)
+    except Exception as e:
+        await event.respond(f"❌ <b>Error:</b> {html.escape(str(e))}", parse_mode='html')
+    finally:
+        if os.path.exists(file_path): os.remove(file_path)
+
+@client.on(events.NewMessage(func=lambda e: e.text and e.text.strip().startswith('{') and 'CloudFront-Policy' in e.text))
+async def handle_raw_json(event):
+    """Menangani jika user mengirimkan teks JSON Vigloo secara langsung."""
+    user_id = event.sender_id
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        return
+        
+    await process_content(event, event.text, "Vigloo_Text.json", user_id)
+
+async def process_content(event, content, filename, user_id):
+    """Fungsi bersama untuk memproses konten (JSON/M3U8) baik dari file maupun teks."""
+    try:
         source_type = "unknown"
         drama_info = None
         
@@ -184,12 +201,12 @@ async def handle_document(event):
             drama_info = parsers.parse_m3u8_content(content, filename)
             
         if not drama_info or source_type == "unknown":
-            await event.respond("❌ Format file tidak dikenali (Bukan JSON Drama atau M3U8 valid).")
-            if os.path.exists(file_path): os.remove(file_path)
+            await event.respond("❌ Format tidak dikenali (Bukan JSON Drama atau M3U8 valid).")
             return
 
         # Setup Session
-        session_id = f"{user_id}_{event.id}"
+        # Gunakan ID unik agar tidak bentrok jika user kirim banyak teks cepat
+        session_id = f"{user_id}_{event.id or int(time.time())}"
         session_dir = os.path.join(TEMP_DIR, session_id)
         os.makedirs(session_dir, exist_ok=True)
         
@@ -223,7 +240,7 @@ async def handle_document(event):
         buttons = [
             [
                 Button.inline("🎬 Softsub (MKV/MP4)", data=f"sub_soft_{session_id}"),
-                Button.inline("🎞️ Hardsub (Burn-in)", data=f"sub_hard_{session_id}")
+                Button.inline("🎞️ Hardsub (Wait)", data=f"sub_hard_{session_id}")
             ],
             [Button.inline("❌ Batal", data=f"cancel_{session_id}")]
         ]
@@ -242,9 +259,7 @@ async def handle_document(event):
             await event.respond(text, buttons=buttons, parse_mode='html')
 
     except Exception as e:
-        await event.respond(f"❌ <b>Error:</b> {html.escape(str(e))}", parse_mode='html')
-    finally:
-        if os.path.exists(file_path): os.remove(file_path)
+        await event.respond(f"❌ <b>Process Error:</b> {html.escape(str(e))}", parse_mode='html')
 
 @client.on(events.NewMessage(func=lambda e: e.document and e.document.mime_type != 'application/json'))
 async def handle_any_file_hint(event):
