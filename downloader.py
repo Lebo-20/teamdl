@@ -1,11 +1,21 @@
 import os
 import subprocess
-import aiohttp # type: ignore
+import aiohttp
 import asyncio
 import urllib.parse
-from typing import Dict, Optional
+from typing import Dict, Optional, List, Any
+import random
+import time
 import config
 from proxy_manager import proxy_manager
+
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1",
+    "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
+]
 
 async def download_file(url: str, output_path: str, headers: Optional[Dict[str, str]] = None) -> bool:
     """Download file biasa (subtitles, mp4 direct)."""
@@ -21,11 +31,14 @@ async def download_file(url: str, output_path: str, headers: Optional[Dict[str, 
     elif "rishort.workers.dev" in url: referer = "https://hls-proxy.rishort.workers.dev/"
     elif "flickreels.com" in url: referer = "https://www.flickreels.com/"
     
+    # Pilih User-Agent Random
+    ua = random.choice(USER_AGENTS)
+    
     parsed = urllib.parse.urlparse(referer)
     origin = f"{parsed.scheme}://{parsed.netloc}"
     
     default_headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": ua,
         "Referer": referer,
         "Origin": origin,
         "Accept": "*/*",
@@ -56,11 +69,19 @@ async def download_file(url: str, output_path: str, headers: Optional[Dict[str, 
         if getattr(config, 'USE_AUTO_PROXY', False):
             print("Download failed, retrying with free proxy...")
             for i in range(3): # Coba 3 kali dengan proxy berbeda
+                # Tambahkan delay random (1-3 detik) agar tidak terdeteksi bot flood
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+                
                 auto_proxy = await proxy_manager.get_random_proxy()
                 if not auto_proxy: break
+                
+                # Ganti UA lagi untuk setiap retry
+                retry_headers = default_headers.copy()
+                retry_headers["User-Agent"] = random.choice(USER_AGENTS)
+                
                 print(f"Attempting with Proxy: {auto_proxy}")
                 try:
-                    async with aiohttp.ClientSession(headers=default_headers) as session:
+                    async with aiohttp.ClientSession(headers=retry_headers) as session:
                         async with session.get(url, timeout=120, proxy=auto_proxy) as response:
                             if response.status == 200:
                                 with open(output_path, 'wb') as f:
@@ -324,16 +345,27 @@ async def download_video_ytdlp(url: str, output_path: str, headers: dict | None 
     if getattr(config, 'USE_AUTO_PROXY', False):
         print("YTDLP failed, retrying with auto-proxy...")
         for i in range(2): # Coba 2 kali saja agar tidak kelamaan
+            # Delay random 2-5 detik
+            await asyncio.sleep(random.uniform(2.0, 5.0))
+            
             auto_proxy = await proxy_manager.get_random_proxy()
             if not auto_proxy: break
             
+            # Ganti User-Agent random
+            new_ua = random.choice(USER_AGENTS)
+            
             # Copy cmd & ganti proxy-nya
             proxy_cmd = list(base_cmd)
+            # Update UA di command list
+            for idx, val in enumerate(proxy_cmd):
+                if val == "--user-agent":
+                    proxy_cmd[idx+1] = new_ua
+            
             # Sisipkan --proxy ke list command
             proxy_cmd.insert(-2, "--proxy") # Insert before -o
             proxy_cmd.insert(-2, auto_proxy)
             
-            print(f"Retrying YTDLP with Proxy: {auto_proxy}")
+            print(f"Retrying YTDLP with Proxy: {auto_proxy} UA: {new_ua}")
             if await execute_ytdlp(proxy_cmd):
                 return True
                     
