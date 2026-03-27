@@ -387,13 +387,20 @@ async def handle_vigloo_search(event):
     msg = await event.respond(f"🔍 <b>Mencari:</b> <code>{html.escape(query)}</code>...", parse_mode='html')
     
     try:
+        # Jika query adalah 8 digit angka, coba anggap sebagai ID Drama langsung
+        if query.isdigit() and len(query) >= 8:
+            # Trigger callback 'vigloo_view_ID' secara internal
+            event.data = f"vigloo_view_{query}".encode()
+            await handle_callback(event)
+            return
+
         results = await vigloo_api.search(query)
         if results is None:
             await msg.edit("❌ <b>Gagal mengakses API Vigloo.</b>\nPastikan <code>VIGLOO_TOKEN</code> di <code>config.py</code> sudah benar dan tidak expired.", parse_mode='html')
             return
             
         if not results:
-            await msg.edit("❌ Drama tidak ditemukan. Coba gunakan judul dalam bahasa Inggris atau kata kunci lain.")
+            await msg.edit("❌ Drama tidak ditemukan. Coba gunakan judul dalam bahasa Inggris atau ID Drama (8 digit).")
             return
 
         text = f"🎯 <b>Hasil Pencarian Vigloo:</b>\n"

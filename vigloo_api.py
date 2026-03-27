@@ -26,11 +26,12 @@ class ViglooAPI:
             print(f"Vigloo Request Error: {e}")
             return None
 
-    async def search(self, query: str, limit: int = 20, lang: str = "en") -> List[Dict]:
+    async def search(self, query: str, limit: int = 20, lang: str = "en") -> Optional[List[Dict]]:
         """Search dramas by query."""
         params = {"q": query, "limit": limit, "lang": lang}
         data = await self._get("/api/v1/search", params=params)
-        return data.get("programs", []) if data else []
+        if data is None: return None
+        return data.get("programs", [])
 
     async def get_drama_detail(self, program_id: str, lang: str = "en") -> Optional[Dict]:
         """Get drama metadata and episode list."""
