@@ -1059,7 +1059,7 @@ async def handle_callback_download(event, session_id):
             
             try:
                 # MENGUTAMAKAN YT-DLP UNTUK KESTABILAN
-                if source == "vigloo":
+                if source in ["vigloo", "vigloo_json"]:
                     cookies = ep.get('cookies', {})
                     headers = {"Cookie": "; ".join([f"{k}={v}" for k, v in cookies.items()])} if cookies else {}
                     success = await downloader.download_video_ytdlp(url, output_path, headers)

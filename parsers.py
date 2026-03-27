@@ -30,6 +30,10 @@ def detect_source(data: Any) -> str:
         return "goodshort"
     if "code" in data and "play_url" in data.get("data", {}):
         return "meloshort"
+    if "status" in data and "payload" in data:
+        payload = data.get("payload", {})
+        if "url" in payload and "vigloo" in str(payload.get("url")):
+            return "vigloo_json"
     if "data" in data and "episodes" in data.get("data", {}) and "h264" in str(data):
         return "stardust"
     if "id" in data and "episode_list" in data and "external_audio_h264_m3u8" in str(data):
@@ -440,6 +444,8 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_goodshort(data, filename)
     elif source_type == "meloshort":
         return parse_meloshort(data)
+    elif source_type == "vigloo_json":
+        return parse_vigloo_json(data, filename)
     elif source_type == "stardust":
         return parse_stardust(data)
     elif source_type == "freereels":
@@ -511,6 +517,34 @@ def parse_draamabox_list(data: Any, filename: str = "") -> dict:
         "cover": cover,
         "total_ep": len(episodes),
         "episodes": sorted(episodes, key=lambda x: x["num"])
+    }
+
+def parse_vigloo_json(data: dict, filename: str) -> dict:
+    """Parsing format Vigloo JSON dengan CloudFront cookies."""
+    payload = data.get("payload", {})
+    drama = payload.get("drama", {})
+    
+    # CloudFront cookies
+    cookies_dict = payload.get("cookies", {})
+    
+    # Handle single episode
+    episodes = []
+    if "url" in payload:
+        episodes.append({
+            "num": 1,
+            "url": payload.get("url"),
+            "cookies": cookies_dict,
+            "subtitle": None
+        })
+        
+    title = drama.get("title") or filename.replace(".json", "") or "Vigloo Document"
+    
+    return {
+        "title": title,
+        "sinopsis": drama.get("synopsis") or "",
+        "cover": drama.get("poster") or "",
+        "total_ep": 1,
+        "episodes": episodes
     }
 
 def parse_shorttv(data: dict) -> dict:
