@@ -35,16 +35,31 @@ class HLSProxy:
 
         # Decode URL
         target_url = urllib.parse.unquote(target_url)
+        parsed_target = urllib.parse.urlparse(target_url)
         
-        # User-Agent mobile for better bypass
-        ua = "Mozilla/5.0 (Linux; Android 13; Redmi Note 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
+        # Deteksi Platform untuk Header Spesifik
+        is_dramabox = "dramaboxdb.com" in parsed_target.hostname or "dramabox" in target_url
         
-        headers = {
-            "User-Agent": ua,
-            "Accept": "*/*",
-            "Accept-Encoding": "identity",
-            "Connection": "keep-alive"
-        }
+        if is_dramabox:
+            # DramaBox CDN requires Dalvik UA and specific headers
+            ua = "Dalvik/2.1.0 (Linux; U; Android 13; M2101K7AG Build/TKQ1.221013.002)"
+            headers = {
+                "User-Agent": ua,
+                "Referer": "https://dramaboxdb.com/",
+                "Origin": "https://dramaboxdb.com",
+                "Accept": "*/*",
+                "Accept-Encoding": "identity",
+                "Connection": "keep-alive"
+            }
+        else:
+            # Default UA for other platforms
+            ua = "Mozilla/5.0 (Linux; Android 13; Redmi Note 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
+            headers = {
+                "User-Agent": ua,
+                "Accept": "*/*",
+                "Accept-Encoding": "identity",
+                "Connection": "keep-alive"
+            }
 
         # Handle range headers if provided by player/downloader
         if request.headers.get('Range'):
