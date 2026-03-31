@@ -668,6 +668,152 @@ async def handle_link_sub_callback(event):
     user_sessions.pop(session_id, None)
     await summary_msg.edit(final_text, parse_mode='html')
 
+async def handle_upload_task(event, session_id, target_format="MP4", force_files=None):
+    """Fungsi pembantu untuk menangani proses upload file ke Telegram."""
+    session = user_sessions.get(session_id)
+    if not session: return
+
+    # Pastikan format disimpan ke session agar bisa diakses di report
+    session['format'] = target_format
+    
+    # Gunakan force_files jika ada (misal dari kegagalan merge), jika tidak ambil dari downloaded
+    files = list(force_files) if force_files else list(session.get('downloaded', []))
+    
+    if not files:
+        try:
+            await event.edit("⚠️ Tidak ada file untuk diupload.")
+        except:
+            await client.send_message(event.chat_id, "⚠️ Tidak ada file untuk diupload.")
+        return
+
+    # Natural Sort agar urutan upload pas
+    import re
+    def natural_sort_key(s):
+        return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
+    
+    files.sort(key=natural_sort_key)
+
+    uploaded = 0
+    failed_up = 0
+    drama_info = session.get('drama_info', {})
+    title = drama_info.get('title', 'Unknown')
+    up_start_time = time.time()
+
+    # Pastikan live_status diinisialisasi untuk monitoring panel
+    if "live_status" not in session:
+        session["live_status"] = {}
+
+    for idx, filepath in enumerate(files):
+        current = idx + 1
+        text = (
+            f"⬆️ <b>PROSES UPLOAD</b>\n"
+            f"📦 <b>Drama:</b> {html.escape(title)}\n"
+            f"📺 <b>Upload:</b> {current}/{len(files)}\n"
+            f"{make_progress_bar(current, len(files))}\n"
+            f"✅ Berhasil: {uploaded} | ❌ Gagal: {failed_up}"
+        )
+        try:
+            await event.edit(text, parse_mode='html')
+        except Exception:
+            pass
+
+        upload_path = filepath
+        # Konversi format jika diminta (MKV atau MP4)
+        if not filepath.endswith(f".{target_format}"):
+            converted = filepath.rsplit('.', 1)[0] + f".{target_format}"
+            if os.path.exists(converted): os.remove(converted)
+            try:
+                sub_codec = "srt" if target_format == "MKV" else "mov_text"
+                cmd = ["ffmpeg", "-y", "-i", filepath, "-map", "0", "-c", "copy", "-c:s", sub_codec, converted]
+                subprocess.run(cmd, check=True, capture_output=True)
+                upload_path = converted
+            except Exception as e:
+                print(f"FFmpeg Convert Error: {e}")
+                try:
+                    subprocess.run(["ffmpeg", "-y", "-i", filepath, "-c", "copy", converted], 
+                                 check=True, capture_output=True)
+                    upload_path = converted
+                except: pass
+
+        # Update Live Status for Panel
+        up_elapsed = int(time.time() - up_start_time)
+        up_pct = int((current / len(files)) * 100)
+        up_eta_sec = int((up_elapsed / current) * (len(files) - current)) if current > 0 else 0
+        
+        session["live_status"].update({
+            "done": current,
+            "total": len(files),
+            "pct": up_pct,
+            "eta": str(timedelta(seconds=up_eta_sec)),
+            "elapsed": str(timedelta(seconds=up_elapsed)),
+            "type": "UPLOAD"
+        })
+
+        try:
+            if not os.path.exists(upload_path):
+                raise FileNotFoundError(f"File not found: {upload_path}")
+
+            # Ekstrak thumbnail & info video
+            thumb_path = os.path.join(session['session_dir'], f"thumb_up_{current}.jpg")
+            has_thumb = await downloader.extract_thumbnail(upload_path, thumb_path)
+            v_info = await downloader.get_video_info(upload_path)
+
+            await send_and_backup(
+                event.chat_id,
+                upload_path,
+                caption=f"📺 {html.escape(title)} - Episode {current}",
+                thumb=thumb_path if has_thumb else None,
+                attributes=[DocumentAttributeVideo(
+                    duration=v_info["duration"],
+                    w=v_info["width"],
+                    h=v_info["height"],
+                    supports_streaming=True
+                )],
+                parse_mode='html',
+                force_document=True,
+                supports_streaming=True
+            )
+            uploaded += 1
+            if os.path.exists(thumb_path): os.remove(thumb_path)
+        except Exception as e:
+            print(f"Upload Failure: {str(e)}")
+            failed_up += 1
+        finally:
+            # Cleanup temporary converted file but KEEP original downloaded file 
+            # (session cleanup will handle original files at the very end)
+            if upload_path != filepath and os.path.exists(upload_path): 
+                os.remove(upload_path)
+        
+        await asyncio.sleep(1)
+
+    # Hapus status monitoring
+    session.pop("live_status", None)
+
+    # FINAL REPORT
+    sinopsis = drama_info.get('sinopsis', 'Tidak ada sinopsis.')
+    report = (
+        f"✅ <b>PROSES SELESAI!</b>\n"
+        f"──────────────────────────\n"
+        f"📦 <b>Drama:</b> {html.escape(title)}\n"
+        f"🎬 <b>Format:</b> {session.get('format', 'MP4')}\n"
+        f"📖 <b>Sinopsis:</b>\n<i>{html.escape(sinopsis)}</i>\n"
+        f"──────────────────────────\n"
+        f"⬆️ <b>Total File</b>    : {len(files)}\n"
+        f"✅ <b>Berhasil</b>      : {uploaded}\n"
+        f"❌ <b>Gagal Upload</b>  : {failed_up}\n"
+        f"──────────────────────────\n"
+        f"🥳 Semua proses telah selesai! 🎉"
+    )
+    
+    try:
+        await event.respond(report, parse_mode='html')
+    except:
+        await client.send_message(event.chat_id, report, parse_mode='html')
+        
+    # Full Cleanup
+    user_sessions.pop(session_id, None)
+    shutil.rmtree(session['session_dir'], ignore_errors=True)
+
 async def show_vigloo_drama_detail(event, program_id, user_id, msg_to_edit=None):
     """Helper shared function untuk menampilkan detail drama Vigloo."""
     if msg_to_edit:
@@ -821,7 +967,10 @@ async def handle_callback(event):
                 user_sessions.pop(session_id, None)
                 shutil.rmtree(session["session_dir"], ignore_errors=True)
             else:
-                await msg.edit("❌ Gagal menggabungkan video.")
+                await msg.edit("❌ <b>Gagal menggabungkan video.</b>\n\n⚠️ Mengirim file asli secara terpisah sebagai cadangan...", parse_mode='html')
+                await asyncio.sleep(2)
+                # Fallback: Upload as individual files
+                await handle_upload_task(event, session_id, "MP4", force_files=file_paths)
         except Exception as e:
             await msg.edit(f"❌ Error saat merge: {e}")
             
@@ -926,124 +1075,17 @@ async def handle_callback(event):
             except Exception as e:
                 await event.respond(f"❌ Gagal mengirim file gabungan: {e}")
         else:
-            await event.edit("❌ Gagal menggabungkan video. Pastikan semua episode terdownload dengan benar.")
+            await event.edit("❌ <b>Gagal menggabungkan video.</b>\n\n⚠️ Mengirim episode secara terpisah sebagai alternatif...", parse_mode='html')
+            await asyncio.sleep(2)
+            # Fallback: Upload as individual episodes
+            await handle_upload_task(event, session_id, "MP4")
 
     elif data.startswith("up_"):
         parts = data.split("_", 2)
         target_format = parts[1].upper()
         session_id = parts[2]
-        session = user_sessions.get(session_id)
-        if not session: return
+        await handle_upload_task(event, session_id, target_format)
 
-        session['format'] = target_format
-        files = session['downloaded']
-        if not files:
-            await event.edit("⚠️ Tidak ada file untuk diupload.")
-            return
-        # Natural Sort agar urutan upload pas (Ep1, Ep2, dst... bukan Ep1, Ep10, Ep2)
-        import re
-        def natural_sort_key(s):
-            return [int(text) if text.isdigit() else text.lower() for text in re.split('([0-9]+)', s)]
-        
-        files.sort(key=natural_sort_key)
-
-        uploaded = 0
-        failed_up = 0
-        title = session['drama_info']['title']
-        up_start_time = time.time()
-
-        for idx, filepath in enumerate(files):
-            current = idx + 1
-            text = (
-                f"⬆️ <b>PROSES UPLOAD</b>\n"
-                f"📦 <b>Drama:</b> {html.escape(title)}\n"
-                f"📺 <b>Upload:</b> {current}/{len(files)}\n"
-                f"{make_progress_bar(current, len(files))}\n"
-                f"✅ Berhasil: {uploaded} | ❌ Gagal: {failed_up}"
-            )
-            try:
-                await event.edit(text, parse_mode='html')
-            except Exception: pass
-
-            upload_path = filepath
-            if not filepath.endswith(f".{target_format}"):
-                converted = filepath.rsplit('.', 1)[0] + f".{target_format}"
-                if os.path.exists(converted): os.remove(converted)
-                try:
-                    # Pastikan menyalin semua stream (video, audio, subtitle) dengan -map 0
-                    # Gunakan codec subtitle yang tepat sesuai format target
-                    sub_codec = "srt" if target_format == "MKV" else "mov_text"
-                    cmd = ["ffmpeg", "-y", "-i", filepath, "-map", "0", "-c", "copy", "-c:s", sub_codec, converted]
-                    subprocess.run(cmd, check=True, capture_output=True)
-                    upload_path = converted
-                except Exception as e:
-                    print(f"FFmpeg Convert Error: {e}")
-                    # Jika gagal (mungkin stream tidak kompatibel), coba copy biasa tanpa -map 0
-                    try:
-                        subprocess.run(["ffmpeg", "-y", "-i", filepath, "-c", "copy", converted], 
-                                     check=True, capture_output=True)
-                        upload_path = converted
-                    except: pass
-
-            # Update Live Status for Panel
-            up_elapsed = int(time.time() - up_start_time)
-            up_pct = int((current / len(files)) * 100)
-            up_eta_sec = int((up_elapsed / current) * (len(files) - current)) if current > 0 else 0
-            
-            session["live_status"] = {
-                "done": current,
-                "total": len(files),
-                "pct": up_pct,
-                "eta": str(timedelta(seconds=up_eta_sec)),
-                "elapsed": str(timedelta(seconds=up_elapsed)),
-                "type": "UPLOAD"
-            }
-
-            try:
-                if not os.path.exists(upload_path):
-                    raise FileNotFoundError(f"File not found: {upload_path}")
-
-                # Telethon upload 
-                await send_and_backup(
-                    event.chat_id,
-                    upload_path,
-                    caption=f"📺 {html.escape(title)} - Episode {current}",
-                    parse_mode='html',
-                    force_document=True,
-                    supports_streaming=True
-                )
-                uploaded += 1
-            except Exception as e:
-                print(f"Upload Failure: {str(e)}")
-                failed_up += 1
-            finally:
-                if os.path.exists(upload_path): os.remove(upload_path)
-                if upload_path != filepath and os.path.exists(filepath): os.remove(filepath)
-            
-            await asyncio.sleep(2)
-
-        # Hapus status monitoring setelah upload selesai
-        session.pop("live_status", None)
-
-        # FINAL REPORT CANTIK
-        drama_info = session['drama_info']
-        sinopsis = drama_info.get('sinopsis', 'Tidak ada sinopsis.')
-        report = (
-            f"✅ <b>PROSES SELESAI!</b>\n"
-            f"──────────────────────────\n"
-            f"📦 <b>Drama:</b> {html.escape(title)}\n"
-            f"🎬 <b>Format:</b> {session['format']}\n"
-            f"📖 <b>Sinopsis:</b>\n<i>{html.escape(sinopsis)}</i>\n"
-            f"──────────────────────────\n"
-            f"⬆️ <b>Total File</b>    : {len(files)}\n"
-            f"✅ <b>Berhasil</b>      : {uploaded}\n"
-            f"❌ <b>Gagal Upload</b>  : {failed_up}\n"
-            f"──────────────────────────\n"
-            f"🥳 Semua proses telah selesai! 🎉"
-        )
-        await event.respond(report, parse_mode='html')
-        user_sessions.pop(session_id, None)
-        shutil.rmtree(session['session_dir'], ignore_errors=True)
 
 async def handle_callback_download(event, session_id):
     session = user_sessions.get(session_id)
