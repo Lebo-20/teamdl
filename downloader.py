@@ -465,75 +465,119 @@ async def mux_subtitle(video_path: str, sub_path: str, output_ext: str) -> str:
         return ""
 
 async def merge_videos(video_list: list[str], output_path: str, progress_callback=None) -> bool:
-    """Gabungkan daftar video menjadi satu file menggunakan metode intermediate TS agar durasi akurat."""
+    """Gabungkan daftar video menjadi satu file menggunakan metode Concat Demuxer (Preserve Streams)."""
     if not video_list: return False
     
-    temp_ts_files = []
     session_dir = os.path.dirname(output_path)
     total_parts = len(video_list)
+    list_file = os.path.join(session_dir, "concat_list.txt")
     
     try:
-        # 1. Konversi setiap MP4 ke TS (Lossless & Cepat)
-        for idx, v in enumerate(video_list):
-            if progress_callback:
-                await progress_callback(idx, total_parts, phase="CONVERTING")
-                
-            ts_path = os.path.join(session_dir, f"temp_merge_{idx}.ts")
-            
-            # Deteksi codec untuk bitstream filter yang tepat
-            v_info = await get_video_info(v)
-            v_codec = v_info.get("codec", "h264")
-            bsf = "h264_mp4toannexb"
-            if "hevc" in v_codec or "h265" in v_codec:
-                bsf = "hevc_mp4toannexb"
-            
-            # Gunakan bitstream filter untuk h264/hevc agar kompatibel
-            # Tambahkan -sn agar abaikan subtitle saat konversi ke TS (mencegah error)
-            cmd_ts = [
-                "ffmpeg", "-y", "-i", v,
-                "-map", "0:v:0", "-map", "0:a:0", # Ambil video & audio pertama saja
-                "-c", "copy", "-bsf:v", bsf, 
-                "-sn", # Skip subtitle agar tidak error saat ke mpegts
-                "-f", "mpegts", ts_path
-            ]
-            process = await asyncio.create_subprocess_exec(
-                *cmd_ts,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
-            )
-            await process.communicate()
-            if os.path.exists(ts_path):
-                temp_ts_files.append(ts_path)
-
-        if not temp_ts_files: return False
+        # 1. Buat file list untuk Concat Demuxer
+        with open(list_file, "w", encoding="utf-8") as f:
+            for v in video_list:
+                # Absolutepath untuk safety
+                v_abs = os.path.abspath(v).replace("\\", "/")
+                f.write(f"file '{v_abs}'\n")
 
         if progress_callback:
-            await progress_callback(total_parts, total_parts, phase="MERGING")
+            await progress_callback(0, total_parts, phase="PREPARING_CONCAT")
 
-        # 2. Gabungkan file TS menggunakan protokol concat
-        concat_str = "concat:" + "|".join(temp_ts_files)
-        cmd_merge = [
-            "ffmpeg", "-y", "-i", concat_str,
-            "-c", "copy", "-bsf:a", "aac_adtstoasc", 
-            "-movflags", "+faststart", # Supaya durasi terhitung benar & cepat diload
+        # 2. Gabungkan menggunakan concat demuxer
+        # -c copy: Menyalin semua stream (video, audio, subs) tanpa re-encoding
+        # -map 0: Menyalin SEMUA stream (untuk dukungan softsub)
+        # -bsf:a aac_adtstoasc: Standard fix untuk AAC di format MP4/MKV
+        cmd = [
+            "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
+            "-map", "0", "-c", "copy", "-bsf:a", "aac_adtstoasc", 
+            "-movflags", "+faststart", 
             output_path
         ]
         
         process = await asyncio.create_subprocess_exec(
-            *cmd_merge,
+            *cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
         await process.communicate()
         
-        return process.returncode == 0 and os.path.exists(output_path)
+        if process.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 1024*10:
+             return True
+             
+        # --- FALLBACK 1: TS Protocol (If concat demuxer fails due to different codecs) ---
+        if progress_callback:
+            await progress_callback(0, total_parts, phase="FALLBACK_TS")
+            
+        temp_ts_files = []
+        for idx, v in enumerate(video_list):
+            ts_path = os.path.join(session_dir, f"temp_merge_{idx}.ts")
+            v_info = await get_video_info(v)
+            v_codec = v_info.get("codec", "h264")
+            bsf = "h264_mp4toannexb" if "h264" in v_codec else "hevc_mp4toannexb"
+            
+            cmd_ts = ["ffmpeg", "-y", "-i", v, "-map", "0:v:0", "-map", "0:a:0", "-c", "copy", "-bsf:v", bsf, "-sn", "-f", "mpegts", ts_path]
+            p = await asyncio.create_subprocess_exec(*cmd_ts, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            await p.communicate()
+            if os.path.exists(ts_path): temp_ts_files.append(ts_path)
+
+        if temp_ts_files:
+            concat_str = "concat:" + "|".join(temp_ts_files)
+            cmd_merge = ["ffmpeg", "-y", "-i", concat_str, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", output_path]
+            p = await asyncio.create_subprocess_exec(*cmd_merge, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            await p.communicate()
+            for ts in temp_ts_files: 
+                if os.path.exists(ts): os.remove(ts)
+            return p.returncode == 0 and os.path.exists(output_path)
+            
+        return False
     except Exception as e:
         print(f"Merge Error: {e}")
         return False
     finally:
-        # Bersihkan file TS sementara
-        for ts in temp_ts_files:
-            if os.path.exists(ts): os.remove(ts)
+        shutil.rmtree(session_dir, ignore_errors=True)
+
+async def create_cinematic_photo_video(photo_path: str, audio_path: str, text: str, output_path: str) -> bool:
+    """Buat video sinematik (TikTok/Reels style) dari foto, audio, dan teks."""
+    font_path = os.path.abspath("Montserrat-Bold.ttf")
+    if not os.path.exists(font_path):
+        # Fallback common Windows font
+        font_path = "C\\\\:/Windows/Fonts/arialbd.ttf"
+    else:
+        # Menangani path untuk filter ffmpeg (Windows needs special escaping)
+        font_path = font_path.replace("\\", "/").replace(":", "\\:")
+
+    duration = 10
+    
+    # Filter zoompan (Ken Burns): slow zoom center
+    # warm look: colorbalance (increase red/yellow)
+    # text overlay: centered, black shadow, white text
+    vf = (
+        f"scale=2000:-1,"
+        f"zoompan=z='min(zoom+0.0015,1.5)':d={duration*25}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1080x1920,"
+        f"colorbalance=rs=0.1:gs=0.0:bs=-0.1:rm=0.1:gm=0.0:bm=-0.1,"
+        f"drawtext=fontfile='{font_path}':text='{text}':fontcolor=white:fontsize=75:x=(w-text_w)/2:y=(h-text_h)/2:shadowcolor=black@0.6:shadowx=4:shadowy=4"
+    )
+
+    cmd = [
+        "ffmpeg", "-y", "-loop", "1", "-t", str(duration), "-i", photo_path,
+        "-i", audio_path,
+        "-vf", vf,
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-b:a", "192k", "-shortest",
+        output_path
+    ]
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        await process.communicate()
+        return process.returncode == 0 and os.path.exists(output_path)
+    except Exception as e:
+        print(f"Cinematic video Error: {e}")
+        return False
 
 async def extract_thumbnail(video_path: str, thumb_path: str) -> bool:
     """Ekstrak thumbnail dari video menggunakan FFmpeg."""

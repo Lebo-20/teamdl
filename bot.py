@@ -261,6 +261,95 @@ async def process_content(event, content, filename, user_id):
     except Exception as e:
         await event.respond(f"❌ <b>Process Error:</b> {html.escape(str(e))}", parse_mode='html')
 
+@client.on(events.NewMessage(func=lambda e: e.photo))
+async def handle_photo(event):
+    """Mendeteksi foto untuk membuat video cinematic."""
+    user_id = event.sender_id
+    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+        return
+
+    session_id = f"cinema_{user_id}"
+    session_dir = os.path.join(TEMP_DIR, session_id)
+    os.makedirs(session_dir, exist_ok=True)
+    
+    photo_path = os.path.join(session_dir, "input_photo.jpg")
+    await event.download_media(file=photo_path)
+    
+    user_sessions[session_id] = {
+        "photo": photo_path,
+        "session_dir": session_dir,
+        "state": "AWAITING_MUSIC",
+        "chat_id": event.chat_id
+    }
+    
+    await event.respond("🎨 <b>Foto diterima!</b>\nSekarang, kirimkan musik (file MP3 atau Voice Note) untuk latar belakang video cinematic Anda.", parse_mode='html')
+
+@client.on(events.NewMessage(func=lambda e: (e.audio or e.voice) and not e.text))
+async def handle_audio_cinema(event):
+    """Mendeteksi audio untuk video cinematic."""
+    user_id = event.sender_id
+    session_id = f"cinema_{user_id}"
+    session = user_sessions.get(session_id)
+    
+    if not session or session.get("state") != "AWAITING_MUSIC":
+        return
+
+    audio_path = os.path.join(session["session_dir"], "input_audio.mp3")
+    await event.download_media(file=audio_path)
+    
+    session["audio"] = audio_path
+    session["state"] = "AWAITING_TEXT"
+    
+    await event.respond("🎵 <b>Musik diterima!</b>\nTerakhir, kirimkan teks (kata-kata aesthetic) yang ingin ditampilkan di tengah video.", parse_mode='html')
+
+@client.on(events.NewMessage(func=lambda e: e.text and not e.text.startswith('/')))
+async def handle_text_logic(event):
+    """Menangani teks input untuk berbagai fungsi (termasuk cinematic)."""
+    user_id = event.sender_id
+    
+    # 1. Cek apakah ini bagian dari flow Cinematic
+    cinema_id = f"cinema_{user_id}"
+    session = user_sessions.get(cinema_id)
+    if session and session.get("state") == "AWAITING_TEXT":
+        session["text"] = event.text.strip()
+        session["state"] = "PROCESSING"
+        
+        msg = await event.respond("🎬 <b>Sedang membuat video cinematic...</b>\nMohon tunggu sekitar 10-20 detik.", parse_mode='html')
+        
+        output_path = os.path.join(session["session_dir"], "cinematic_video.mp4")
+        
+        try:
+            success = await downloader.create_cinematic_photo_video(
+                session["photo"], session["audio"], session["text"], output_path
+            )
+            
+            if success:
+                # Ambil thumb
+                thumb_path = os.path.join(session["session_dir"], "thumb_cinema.jpg")
+                await downloader.extract_thumbnail(output_path, thumb_path)
+                
+                await client.send_file(
+                    event.chat_id,
+                    output_path,
+                    caption=f"✨ <b>Cinematic Video Selesai!</b>\n\n📝 Teks: <i>{html.escape(session['text'])}</i>",
+                    thumb=thumb_path if os.path.exists(thumb_path) else None,
+                    supports_streaming=True,
+                    parse_mode='html'
+                )
+                await msg.delete()
+            else:
+                await msg.edit("❌ Gagal membuat video cinematic. Pastikan FFmpeg terinstall dengan benar.")
+        except Exception as e:
+            await msg.edit(f"❌ Error: {e}")
+        finally:
+            user_sessions.pop(cinema_id, None)
+            shutil.rmtree(session["session_dir"], ignore_errors=True)
+        return
+
+    # 2. Logic lainnya (existing rename logic will continue below if needed, 
+    # but rename usually uses e.is_reply which we check later)
+    pass
+
 @client.on(events.NewMessage(func=lambda e: e.document and e.document.mime_type != 'application/json'))
 async def handle_any_file_hint(event):
     user_id = event.sender_id
@@ -1318,7 +1407,11 @@ async def help_menu(event):
         "   pada video tersebut dengan nama baru yang diinginkan.\n\n"
         "4️⃣ <b>Gabungkan (Merge):</b>\n"
         "   Kirim 2 file video atau lebih. Bot akan menawarkan\n"
-        "   tombol <i>'Gabungkan'</i> setelah Anda mengirim file ke-2.\n"
+        "   tombol <i>'Gabungkan'</i> setelah Anda mengirim file ke-2.\n\n"
+        "5️⃣ <b>Video Cinematic (TikTok):</b>\n"
+        "   Kirimkan sebuah <b>Foto</b>, lalu ikuti instruksi bot\n"
+        "   untuk mengirim Musik dan Teks. Bot akan membuatkan\n"
+        "   video cinematic 10 detik dengan efek Ken Burns.\n"
         "──────────────────────────\n"
         f"{owner_text}"
         "🚀 <i>Bot ini didesain untuk kemudahan download drama.</i>"
