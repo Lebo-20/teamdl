@@ -476,17 +476,15 @@ async def merge_videos(video_list: list[str], output_path: str, progress_callbac
         # 1. Buat file list untuk Concat Demuxer
         with open(list_file, "w", encoding="utf-8") as f:
             for v in video_list:
-                # Absolutepath untuk safety
+                # Absolutepath untuk safety dan escape single quotes untuk FFmpeg concat
                 v_abs = os.path.abspath(v).replace("\\", "/")
-                f.write(f"file '{v_abs}'\n")
+                v_escaped = v_abs.replace("'", "'\\''")
+                f.write(f"file '{v_escaped}'\n")
 
         if progress_callback:
             await progress_callback(0, total_parts, phase="PREPARING_CONCAT")
 
         # 2. Gabungkan menggunakan concat demuxer
-        # -c copy: Menyalin semua stream (video, audio, subs) tanpa re-encoding
-        # -map 0: Menyalin SEMUA stream (untuk dukungan softsub)
-        # -bsf:a aac_adtstoasc: Standard fix untuk AAC di format MP4/MKV
         cmd = [
             "ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file,
             "-map", "0", "-c", "copy", "-bsf:a", "aac_adtstoasc", 
@@ -496,13 +494,16 @@ async def merge_videos(video_list: list[str], output_path: str, progress_callbac
         
         process = await asyncio.create_subprocess_exec(
             *cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE
         )
-        await process.communicate()
+        stdout, stderr = await process.communicate()
         
         if process.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 1024*10:
              return True
+        
+        if stderr:
+            print(f"DEBUG Merge Concat Error: {stderr.decode(errors='replace')}")
              
         # --- FALLBACK 1: TS Protocol (If concat demuxer fails due to different codecs) ---
         if progress_callback:
@@ -523,8 +524,15 @@ async def merge_videos(video_list: list[str], output_path: str, progress_callbac
         if temp_ts_files:
             concat_str = "concat:" + "|".join(temp_ts_files)
             cmd_merge = ["ffmpeg", "-y", "-i", concat_str, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", output_path]
-            p = await asyncio.create_subprocess_exec(*cmd_merge, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            await p.communicate()
+            p = await asyncio.create_subprocess_exec(
+                *cmd_merge, 
+                stdout=subprocess.PIPE, 
+                stderr=subprocess.PIPE
+            )
+            stdout, stderr = await p.communicate()
+            if p.returncode != 0 and stderr:
+                print(f"DEBUG Merge Fallback Error: {stderr.decode(errors='replace')}")
+            
             for ts in temp_ts_files: 
                 if os.path.exists(ts): os.remove(ts)
             return p.returncode == 0 and os.path.exists(output_path)
