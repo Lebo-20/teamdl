@@ -4,7 +4,5 @@ yt-dlp
 aiohttp
 aiofiles
 cryptg
-aria2c
-ffmpeg
 python-dotenv
 pyrogram
