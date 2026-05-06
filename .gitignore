@@ -23,3 +23,10 @@ config.py
 *.mkv
 *.srt
 .env
+*.session
+*.session-journal
+/downloads/
+/scratch/
+python
+/splaybot/
+!json_platforms/

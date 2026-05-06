@@ -12,6 +12,9 @@ def detect_source(data: Any) -> str:
     if not isinstance(data, dict):
         return "unknown"
         
+    if "episode_list" in str(data) and "external_audio_h264_m3u8" in str(data):
+        return "freereels"
+
     if "cdnList" in data and "chapterId" in data:
         return "draamabox_list"
     if "squa" in data and "dgiv" in data:
@@ -36,8 +39,7 @@ def detect_source(data: Any) -> str:
             return "vigloo_json"
     if "data" in data and "episodes" in data.get("data", {}) and "h264" in str(data):
         return "stardust"
-    if "id" in data and "episode_list" in data and "external_audio_h264_m3u8" in str(data):
-        return "freereels"
+
     if data.get("drama", {}).get("source") == "dramaflickreels":
         return "dramaflickreels"
     if "videoInfo" in data and "episodesInfo" in data:
@@ -54,6 +56,10 @@ def detect_source(data: Any) -> str:
         return "shorten"
     if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and "raw" in data[0]:
         return "flickreels_array"
+    if "id" in data and "title" in data and "description" in data and "episodes" in data:
+        return "dramanova"
+    if "spres" in data.get("data", {}) and "erefu" in data.get("data", {}).get("dinsur", {}):
+        return "dramatv_ppoem"
     return "unknown"
 
 def parse_dotdrama(data: Any) -> dict:
@@ -360,6 +366,9 @@ def parse_stardust(data: dict) -> dict:
     }
 
 def parse_freereels(data: Any) -> dict:
+    if "data" in data and isinstance(data["data"], dict) and "info" in data["data"]:
+        data = data["data"]["info"]
+        
     episodes_raw = data.get("episode_list", [])
     
     episodes = []
@@ -468,8 +477,66 @@ def parse_json_data(data: Any, source_type: str, filename: str = "") -> dict:
         return parse_shorten(data)
     elif source_type == "flickreels_array":
         return parse_flickreels_array(data, filename)
+    elif source_type == "dramanova":
+        return parse_dramanova(data)
+    elif source_type == "dramatv_ppoem":
+        return parse_dramatv_ppoem(data, filename)
     else:
         raise ValueError(f"Unknown source type: {source_type}")
+
+def parse_dramanova(data: dict) -> dict:
+    episodes_raw = data.get("episodes", [])
+    episodes = []
+    
+    for item in episodes_raw:
+        # Coba ambil url/hls/play_url jika ada (di contoh json tidak ada, tapi antisipasi)
+        url = item.get("url") or item.get("hls_url") or item.get("play_url") or item.get("video_url")
+        episodes.append({
+            "num": item.get("number", 0),
+            "name": item.get("title", ""),
+            "url": url,
+            "subtitle": None
+        })
+        
+    return {
+        "title": data.get("title", "Unknown DramaNova"),
+        "sinopsis": data.get("description", ""),
+        "cover": data.get("cover", ""),
+        "total_ep": len(episodes_raw),
+        "episodes": sorted(episodes, key=lambda x: x["num"])
+    }
+
+def parse_dramatv_ppoem(data: Any, filename: str) -> dict:
+    info = data.get("data", {})
+    ep_list = info.get("dinsur", {}).get("erefu", [])
+    
+    episodes = []
+    for idx, ep_item in enumerate(ep_list):
+        ppoem = ep_item.get("ppoem", [])
+        url = None
+        # Priority: 720P -> 540P -> 480P -> 360P
+        quality_map = {str(q.get("Dcoura", "")): str(q.get("Mcurr", "")) for q in ppoem if isinstance(q, dict)}
+        for q in ["720P", "540P", "480P", "360P"]:
+            if q in quality_map and quality_map[q]:
+                url = quality_map[q]
+                break
+        
+        if not url and ppoem:
+            url = ppoem[0].get("Mcurr")
+            
+        episodes.append({
+            "num": idx + 1,
+            "url": url,
+            "subtitle": None
+        })
+        
+    return {
+        "title": filename.rsplit('.', 1)[0],
+        "sinopsis": "Drama TV Ppoem Structure",
+        "cover": "",
+        "total_ep": len(episodes),
+        "episodes": episodes
+    }
 
 def parse_draamabox_list(data: Any, filename: str = "") -> dict:
     # Normalisasi data ke list agar konsisten (bisa terima 1 objek atau list)

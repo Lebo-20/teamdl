@@ -136,20 +136,124 @@ async def panel_update_loop():
 @client.on(events.NewMessage(pattern='/start'))
 async def start(event):
     user_id = event.sender_id
-    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+    print(f"DEBUG: Received /start from {user_id}")
+    is_admin = user_id == get_config('OWNER_ID') or user_id in ALLOWED_USERS
+    
+    if ALLOWED_USERS and not is_admin:
         await event.respond("Maaf, Anda tidak diizinkan menggunakan bot ini.")
         return
-    await event.respond("Halo! Kirimkan file JSON drama untuk mulai mendownload.")
+        
+    if is_admin:
+        text = (
+            "👑 <b>PANEL ADMIN / DASHBOARD</b>\n"
+            "──────────────────────────\n"
+            "Halo Admin! Bot siap digunakan.\n\n"
+            "Silakan pilih menu di bawah ini, atau cukup kirimkan file <code>.json</code> / M3U8 untuk memulai download otomatis."
+        )
+        buttons = [
+            [Button.inline("➕ Tambah Admin", data="menu_addadmin")],
+            [Button.inline("📂 Upload Platform", data="menu_uploadjson"), Button.inline("🔍 Cari Vigloo", data="menu_vigloo")],
+            [Button.inline("🔗 Download Link", data="menu_link"), Button.inline("📊 Live Panel Status", data="menu_panel")]
+        ]
+        await event.respond(text, buttons=buttons, parse_mode='html')
+    else:
+        text = "Halo! Kirimkan file JSON drama untuk mulai mendownload."
+        await event.respond(text, parse_mode='html')
+
+@client.on(events.CallbackQuery(pattern=r'^menu_'))
+async def handle_menu_callback(event):
+    data = event.data.decode()
+    user_id = event.sender_id
+    state_id = f"menu_{user_id}"
+    
+    if data == "menu_addadmin":
+        text = "👥 <b>Tambah Admin Baru</b>\n\nSilakan kirimkan ID pengguna yang ingin Anda tambahkan sebagai admin:"
+        await event.answer()
+        msg = await event.edit(text, parse_mode='html')
+        user_sessions[state_id] = {"type": "AWAITING_ADMIN", "prompt_msg_id": msg.id if msg else None}
+    elif data == "menu_vigloo":
+        text = "🔍 <b>Pencarian Vigloo</b>\n\nSilakan kirimkan Judul Drama atau ID Vigloo yang ingin dicari:"
+        await event.answer()
+        msg = await event.edit(text, parse_mode='html')
+        user_sessions[state_id] = {"type": "AWAITING_VIGLOO", "prompt_msg_id": msg.id if msg else None}
+    elif data == "menu_link":
+        text = "🔗 <b>Download via Link</b>\n\nSilakan kirimkan link video (MP4/M3U8) yang ingin didownload.\n<i>Anda bisa mengirim hingga 100 link sekaligus dalam satu pesan.</i>"
+        await event.answer()
+        msg = await event.edit(text, parse_mode='html')
+        user_sessions[state_id] = {"type": "AWAITING_LINK", "prompt_msg_id": msg.id if msg else None}
+    elif data == "menu_uploadjson":
+        text = "📂 <b>Upload JSON Platform</b>\n\nSilakan kirimkan file <code>.json</code> yang ingin didaftarkan ke sistem."
+        await event.answer()
+        msg = await event.edit(text, parse_mode='html')
+        user_sessions[state_id] = {"type": "AWAITING_UPLOADJSON", "prompt_msg_id": msg.id if msg else None}
+    elif data == "menu_panel":
+        text = "📊 <b>Panel Monitor Diaktifkan</b>\n\nPesan ini akan diperbarui secara real-time dengan status proses aktif."
+        await event.answer()
+        msg = await event.edit(text, parse_mode='html')
+        panel_messages[event.chat_id] = msg
+
+@client.on(events.NewMessage(pattern=r'^/addadmin\s+(\d+)'))
+async def add_admin(event):
+    user_id = event.sender_id
+    if user_id != get_config('OWNER_ID'):
+        await event.respond("❌ Hanya Owner yang dapat menambah admin.")
+        return
+        
+    try:
+        new_admin = int(event.pattern_match.group(1))
+        
+        if new_admin in ALLOWED_USERS:
+            await event.respond(f"⚠️ User <code>{new_admin}</code> sudah ada di daftar admin.", parse_mode='html')
+            return
+            
+        # Update in memory
+        ALLOWED_USERS.append(new_admin)
+        
+        # Update in config.py
+        with open('config.py', 'r', encoding='utf-8') as f:
+            content = f.read()
+            
+        import re
+        new_content = re.sub(
+            r'ALLOWED_USERS\s*=\s*\[.*?\]', 
+            f'ALLOWED_USERS = {ALLOWED_USERS}', 
+            content, 
+            flags=re.DOTALL
+        )
+        
+        with open('config.py', 'w', encoding='utf-8') as f:
+            f.write(new_content)
+            
+        await event.respond(f"✅ <b>Sukses!</b>\nUser ID <code>{new_admin}</code> berhasil ditambahkan sebagai admin permanen.", parse_mode='html')
+    except Exception as e:
+        await event.respond(f"❌ <b>Error:</b> {str(e)}", parse_mode='html')
+
+@client.on(events.NewMessage(pattern=r'^/uploadjson(\s+|$)'))
+async def cmd_upload_json(event):
+    user_id = event.sender_id
+    is_admin = user_id == get_config('OWNER_ID') or user_id in ALLOWED_USERS
+    if not is_admin: return
+    
+    state_id = f"menu_{user_id}"
+    text = "📂 <b>Upload JSON Platform</b>\n\nSilakan kirimkan file <code>.json</code> yang ingin didaftarkan ke sistem."
+    msg = await event.respond(text, parse_mode='html')
+    user_sessions[state_id] = {"type": "AWAITING_UPLOADJSON", "prompt_msg_id": msg.id if msg else None}
+
 
 @client.on(events.NewMessage(func=lambda e: e.document))
 async def handle_document(event):
     user_id = event.sender_id
-    if ALLOWED_USERS and user_id not in ALLOWED_USERS:
+    filename = event.file.name if event.file else "unknown"
+    print(f"DEBUG: Received document from {user_id}: {filename}")
+    
+    is_admin = user_id == get_config('OWNER_ID') or user_id in ALLOWED_USERS
+    if not is_admin:
+        print(f"DEBUG: User {user_id} not authorized to send documents")
         return
         
     doc = event.document
-    filename = event.file.name
-    if not (filename.endswith('.json') or filename.endswith('.m3u8')):
+    if not (filename.lower().endswith('.json') or filename.lower().endswith('.jsnon') or filename.lower().endswith('.m3u8')):
+        print(f"DEBUG: File {filename} ignored (wrong extension)")
         return
 
     os.makedirs(TEMP_DIR, exist_ok=True)
@@ -159,6 +263,24 @@ async def handle_document(event):
     if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
         await event.respond("❌ File kosong atau gagal didownload.")
         return
+
+    # CEK APAKAH INI UPLOAD JSON (AWAITING_UPLOADJSON)
+    state_id = f"menu_{user_id}"
+    if user_sessions.get(state_id, {}).get("type") == "AWAITING_UPLOADJSON":
+        if filename.lower().endswith(('.json', '.jsnon')):
+            platform_dir = "json_platforms"
+            os.makedirs(platform_dir, exist_ok=True)
+            import shutil
+            dest = os.path.join(platform_dir, filename)
+            shutil.copy(file_path, dest)
+            user_sessions.pop(state_id, None)
+            await event.respond(f"✅ <b>Sukses!</b>\nPlatform <code>{filename}</code> berhasil didaftarkan ke folder <code>{platform_dir}</code>.", parse_mode='html')
+            if os.path.exists(file_path): os.remove(file_path)
+            return
+        else:
+            await event.respond("⚠️ Mohon kirimkan file dengan ekstensi <code>.json</code>.", parse_mode='html')
+            if os.path.exists(file_path): os.remove(file_path)
+            return
 
     try:
         # Gunakan errors='replace' untuk menghindari crash pada karakter aneh
@@ -190,9 +312,12 @@ async def process_content(event, content, filename, user_id):
         try:
             data = json.loads(content)
             source_type = parsers.detect_source(data)
+            print(f"DEBUG: Detected source: {source_type}")
             if source_type != "unknown":
                 drama_info = parsers.parse_json_data(data, source_type, filename)
-        except json.JSONDecodeError:
+                print(f"DEBUG: Parsed drama_info: {drama_info.get('title') if drama_info else 'None'}")
+        except json.JSONDecodeError as je:
+            print(f"DEBUG: JSON decode error: {je}")
             pass
             
         # Jika bukan JSON atau tidak dikenal, coba parse sebagai M3U8
@@ -307,6 +432,75 @@ async def handle_text_logic(event):
     """Menangani teks input untuk berbagai fungsi (termasuk cinematic)."""
     user_id = event.sender_id
     
+    # 0. Cek Menu States
+    state_id = f"state_{user_id}"
+    state_session = user_sessions.get(state_id)
+    if state_session:
+        state = state_session.get("type")
+        text_input = event.text.strip()
+        
+        prompt_msg_id = state_session.get("prompt_msg_id")
+        
+        async def edit_or_respond(txt):
+            try: await event.delete()
+            except: pass
+            
+            if prompt_msg_id:
+                try: return await client.edit_message(event.chat_id, prompt_msg_id, txt, parse_mode='html')
+                except: pass
+            return await event.respond(txt, parse_mode='html')
+
+        if state == "AWAITING_ADMIN":
+            user_sessions.pop(state_id, None)
+            if user_id != get_config('OWNER_ID'):
+                await edit_or_respond("❌ Hanya Owner yang dapat menambah admin.")
+                return
+            try:
+                new_admin = int(text_input)
+                if new_admin in ALLOWED_USERS:
+                    await edit_or_respond(f"⚠️ User <code>{new_admin}</code> sudah ada di daftar admin.")
+                    return
+                ALLOWED_USERS.append(new_admin)
+                with open('config.py', 'r', encoding='utf-8') as f:
+                    content = f.read()
+                import re
+                new_content = re.sub(
+                    r'ALLOWED_USERS\s*=\s*\[.*?\]', 
+                    f'ALLOWED_USERS = {ALLOWED_USERS}', 
+                    content, 
+                    flags=re.DOTALL
+                )
+                with open('config.py', 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+                await edit_or_respond(f"✅ <b>Sukses!</b>\nUser ID <code>{new_admin}</code> berhasil ditambahkan sebagai admin permanen.")
+            except ValueError:
+                await edit_or_respond("❌ ID tidak valid. Kirimkan angka.")
+            return
+            
+        elif state == "AWAITING_VIGLOO":
+            user_sessions.pop(state_id, None)
+            try: await event.delete()
+            except: pass
+            
+            if prompt_msg_id:
+                msg = await client.edit_message(event.chat_id, prompt_msg_id, f"🔍 <b>Mencari:</b> <code>{html.escape(text_input)}</code>...", parse_mode='html')
+            else:
+                msg = None
+            await handle_vigloo_search(event, query_override=text_input, existing_msg=msg)
+            return
+            
+        elif state == "AWAITING_LINK":
+            user_sessions.pop(state_id, None)
+            try: await event.delete()
+            except: pass
+            
+            if prompt_msg_id:
+                msg = await client.edit_message(event.chat_id, prompt_msg_id, f"🚀 Memulai download link...", parse_mode='html')
+            else:
+                msg = None
+            await handle_link_command(event, text_override=text_input, existing_msg=msg)
+            return
+
     # 1. Cek apakah ini bagian dari flow Cinematic
     cinema_id = f"cinema_{user_id}"
     session = user_sessions.get(cinema_id)
@@ -479,17 +673,20 @@ async def handle_rename_reply(event):
         shutil.rmtree(session_dir, ignore_errors=True)
 
 @client.on(events.NewMessage(pattern=r'^/vigloo(\s+|$)(.*)'))
-async def handle_vigloo_search(event):
+async def handle_vigloo_search(event, query_override=None, existing_msg=None):
     user_id = event.sender_id
     if ALLOWED_USERS and user_id not in ALLOWED_USERS:
         return
         
-    query = event.pattern_match.group(2).strip()
+    query = query_override if query_override is not None else event.pattern_match.group(2).strip()
     if not query:
-        await event.respond("❌ Gunakan: `/vigloo Judul Drama` untuk mencari drama.")
+        if existing_msg:
+            await existing_msg.edit("❌ Gunakan: `/vigloo Judul Drama` untuk mencari drama.")
+        else:
+            await event.respond("❌ Gunakan: `/vigloo Judul Drama` untuk mencari drama.")
         return
 
-    msg = await event.respond(f"🔍 <b>Mencari:</b> <code>{html.escape(query)}</code>...", parse_mode='html')
+    msg = existing_msg if existing_msg else await event.respond(f"🔍 <b>Mencari:</b> <code>{html.escape(query)}</code>...", parse_mode='html')
     
     try:
         # Jika query adalah 8 digit angka, coba anggap sebagai ID Drama langsung
@@ -519,26 +716,28 @@ async def handle_vigloo_search(event):
         await msg.edit(f"❌ Error API: {e}")
 
 @client.on(events.NewMessage(pattern=r'^/(l|ytdlleech)(\s+|$)'))
-async def handle_link_command(event):
+async def handle_link_command(event, text_override=None, existing_msg=None):
     user_id = event.sender_id
     if ALLOWED_USERS and user_id not in ALLOWED_USERS:
         return
         
-    text = event.message.text
+    text = text_override if text_override is not None else event.message.text
     # Extract links from the message
     links = re.findall(r'https?://[^\s\n]+', text)
     
     if not links:
-        await event.respond("❌ Mohon sertakan link video (m3u8/mp4).")
+        if existing_msg: await existing_msg.edit("❌ Mohon sertakan link video (m3u8/mp4).")
+        else: await event.respond("❌ Mohon sertakan link video (m3u8/mp4).")
         return
 
     # Limit to 100 links
     if len(links) > 100:
-        await event.respond(f"⚠️ Terlalu banyak link. Maksimal 100 link per perintah. Hanya 100 link pertama yang akan diproses.")
+        if existing_msg: await existing_msg.edit(f"⚠️ Terlalu banyak link. Maksimal 100 link per perintah.")
+        else: await event.respond(f"⚠️ Terlalu banyak link. Maksimal 100 link per perintah.")
         links = links[:100]
 
     total = len(links)
-    summary_msg = await event.respond(f"🚀 Memulai download {total} link...")
+    summary_msg = existing_msg if existing_msg else await event.respond(f"🚀 Memulai download {total} link...")
     
     success_count = 0
     fail_count = 0
@@ -808,8 +1007,8 @@ async def handle_upload_task(event, session_id, target_format="MP4", force_files
 
         upload_path = filepath
         # Konversi format jika diminta (MKV atau MP4)
-        if not filepath.endswith(f".{target_format}"):
-            converted = filepath.rsplit('.', 1)[0] + f".{target_format}"
+        if not filepath.lower().endswith(f".{target_format.lower()}"):
+            converted = filepath.rsplit('.', 1)[0] + f"_conv.{target_format.lower()}"
             if os.path.exists(converted): os.remove(converted)
             try:
                 sub_codec = "srt" if target_format == "MKV" else "mov_text"
@@ -1036,21 +1235,28 @@ async def handle_callback(event):
                         "done": curr, "total": total, "pct": pct, "type": "UPLOAD_MERGE"
                     })
 
-                final_msg = await send_and_backup(
-                    event.chat_id,
-                    output_path,
-                    caption=f"✅ <b>Berhasil Menggabungkan {len(file_paths)} File!</b>\n\n📁 Nama: <code>{output_name}</code>\n\n👆 <b>Balas (reply)</b> ke pesan ini dengan nama baru jika ingin mengubah namanya.",
-                    thumb=thumb_path if has_thumb else None,
-                    attributes=[DocumentAttributeVideo(
-                        duration=v_info["duration"],
-                        w=v_info["width"],
-                        h=v_info["height"],
-                        supports_streaming=True
-                    )],
-                    supports_streaming=True,
-                    parse_mode='html',
-                    progress_callback=up_progress_merge
-                )
+                # AUTO-SPLIT LOGIK (Request User: > 2GB split into 2 parts)
+                split_paths = await downloader.split_video(output_path)
+                
+                for idx_p, upload_path in enumerate(split_paths):
+                    p_info = await downloader.get_video_info(upload_path)
+                    part_text = f" Part {idx_p+1}" if len(split_paths) > 1 else ""
+                    
+                    await send_and_backup(
+                        event.chat_id,
+                        upload_path,
+                        caption=f"✅ <b>Berhasil Menggabungkan {len(file_paths)} File!{part_text}</b>\n\n📁 Nama: <code>{output_name}</code>\n\n👆 <b>Balas (reply)</b> ke pesan ini dengan nama baru jika ingin mengubah namanya.",
+                        thumb=thumb_path if has_thumb else None,
+                        attributes=[DocumentAttributeVideo(
+                            duration=p_info["duration"],
+                            w=p_info["width"],
+                            h=p_info["height"],
+                            supports_streaming=True
+                        )],
+                        supports_streaming=True,
+                        parse_mode='html',
+                        progress_callback=up_progress_merge
+                    )
                 # Sesi merge selesai
                 await msg.delete()
                 user_sessions.pop(session_id, None)
@@ -1096,6 +1302,20 @@ async def handle_callback(event):
     elif data.startswith("dl_"):
         session_id = data.split("dl_")[1]
         await handle_callback_download(event, session_id)
+
+    elif data.startswith("cancel_dl_"):
+        session_id = data.split("cancel_dl_")[1]
+        session = user_sessions.get(session_id)
+        if session:
+            session["cancel_flag"] = True
+            await event.answer("Proses dibatalkan!", alert=True)
+            await event.edit("🚫 <b>Proses Download Dibatalkan oleh Pengguna.</b>\nFile temporary sedang dihapus...", parse_mode='html')
+            import shutil
+            shutil.rmtree(session['session_dir'], ignore_errors=True)
+            user_sessions.pop(session_id, None)
+        else:
+            await event.answer("Sesi tidak ditemukan atau sudah selesai.", alert=True)
+
 
     elif data.startswith("merge_"):
         session_id = data.split("merge_")[1]
@@ -1148,15 +1368,20 @@ async def handle_callback(event):
                 })
 
             try:
-                await send_and_backup(
-                    event.chat_id,
-                    output_path,
-                    caption=f"🎬 <b>{html.escape(title)}</b>\nFull Episodes Merged ✅",
-                    parse_mode='html',
-                    force_document=True,
-                    supports_streaming=True,
-                    progress_callback=up_progress_full
-                )
+                # AUTO-SPLIT LOGIK (Request User: > 2GB split into 2 parts)
+                split_paths = await downloader.split_video(output_path)
+                
+                for idx_p, upload_path in enumerate(split_paths):
+                    part_text = f" (Part {idx_p+1})" if len(split_paths) > 1 else ""
+                    await send_and_backup(
+                        event.chat_id,
+                        upload_path,
+                        caption=f"🎬 <b>{html.escape(title)}{part_text}</b>\nFull Episodes Merged ✅",
+                        parse_mode='html',
+                        force_document=True,
+                        supports_streaming=True,
+                        progress_callback=up_progress_full
+                    )
                 # Cleanup setelah berhasil kirim full movie
                 user_sessions.pop(session_id, None)
                 shutil.rmtree(session['session_dir'], ignore_errors=True)
@@ -1191,6 +1416,7 @@ async def handle_callback_download(event, session_id):
         url = ep.get('url')
         
         async with semaphore:
+            if session.get("cancel_flag"): return
             if not url:
                 counts["failed"] += 1
                 session['failed_list'].append(f"EP{ep_num}(NoURL)")
@@ -1308,6 +1534,7 @@ async def handle_callback_download(event, session_id):
     start_time = time.time()
     async def update_status_loop():
         while (counts["success"] + counts["failed"]) < total:
+            if session.get("cancel_flag"): break
             done = counts["success"] + counts["failed"]
             elapsed = int(time.time() - start_time)
             elapsed_str = str(timedelta(seconds=elapsed))
@@ -1338,8 +1565,9 @@ async def handle_callback_download(event, session_id):
                 f"✅ Selesai: {counts['success']} | ❌ Gagal: {counts['failed']}\n"
                 f"⏱️ <b>Sudah Berjalan:</b> {elapsed_str}"
             )
+            buttons = [[Button.inline("❌ Batal", data=f"cancel_dl_{session_id}")]]
             try:
-                await event.edit(text, parse_mode='html')
+                await event.edit(text, buttons=buttons, parse_mode='html')
             except Exception: pass
             await asyncio.sleep(4)
 
@@ -1348,6 +1576,9 @@ async def handle_callback_download(event, session_id):
     status_task = asyncio.create_task(update_status_loop())
     await asyncio.gather(*tasks)
     status_task.cancel()
+    
+    if session.get("cancel_flag"):
+        return
     
     # Hapus status dari panel segera setelah download selesai
     session.pop("live_status", None)
@@ -1459,7 +1690,9 @@ async def restart_bot(event):
     await event.respond("🔄 Restarting...")
     os.execv(sys.executable, [sys.executable] + sys.argv)
 
+
 print("Telethon Bot is running... (Press Ctrl+C to stop)")
+
 client.loop.create_task(panel_update_loop())
 client.loop.create_task(hls_proxy.start()) # Start HLS Proxy service
 client.run_until_disconnected()

@@ -533,6 +533,52 @@ async def merge_videos(video_list: list[str], output_path: str, progress_callbac
     except Exception as e:
         print(f"Merge Error: {e}")
         return False
+
+async def split_video(video_path: str, max_size_mb: int = 2000) -> list[str]:
+    """Split video menjadi 2 bagian jika melebihi ukuran tertentu (Default 2GB)."""
+    try:
+        file_size = os.path.getsize(video_path) / (1024 * 1024)
+        if file_size <= max_size_mb:
+            return [video_path]
+        
+        print(f"File size {file_size:.2f}MB > {max_size_mb}MB. Splitting into 2 parts...")
+        info = await get_video_info(video_path)
+        duration = info.get("duration", 0)
+        if duration <= 0: return [video_path]
+
+        # Sesuai request user: split jadi 2 part
+        part_duration = duration / 2
+        
+        output_parts = []
+        base_name = video_path.rsplit('.', 1)[0]
+        ext = video_path.rsplit('.', 1)[1]
+        
+        for i in range(2):
+            start_time = i * part_duration
+            part_path = f"{base_name}_Part{i+1}.{ext}"
+            
+            # Split menggunakan -c copy agar sangat cepat
+            cmd = [
+                "ffmpeg", "-y", "-ss", str(start_time), "-t", str(part_duration),
+                "-i", video_path, "-map", "0", "-c", "copy", "-avoid_negative_ts", "1",
+                part_path
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd, 
+                stdout=subprocess.DEVNULL, 
+                stderr=subprocess.DEVNULL
+            )
+            await process.communicate()
+            if os.path.exists(part_path):
+                output_parts.append(part_path)
+        
+        if len(output_parts) == 2:
+            return output_parts
+        return [video_path]
+    except Exception as e:
+        print(f"Split Error: {e}")
+        return [video_path]
     finally:
         shutil.rmtree(session_dir, ignore_errors=True)
 

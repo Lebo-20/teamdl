@@ -20,7 +20,7 @@ class HLSProxy:
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.host, self.port)
         await self.site.start()
-        print(f"✅ HLS Proxy Running on http://{self.host}:{self.port}")
+        print(f"[OK] HLS Proxy Running on http://{self.host}:{self.port}")
 
     async def stop(self):
         """Stop the HLS Proxy server."""

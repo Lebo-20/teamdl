@@ -5,7 +5,7 @@ import parsers
 import downloader
 
 async def main():
-    json_path = "c:/teamdl/poincinta_jodoh_memanggil.json"
+    json_path = "c:/teamdl/json_platforms/FreeReels sensekai.json"
     with open(json_path, "r", encoding="utf-8") as f:
         data = json.load(f)
     
@@ -21,7 +21,7 @@ async def main():
         return
     
     ep = episodes[0]
-    print(f"Downloading Episode {ep['num']}...")
+    print(f"Downloading Episode {ep['num']} from {ep['url']} ...")
     
     output_path = f"c:/teamdl/test_download_ep{ep['num']}.mp4"
     success = await downloader.download_video_ytdlp(ep['url'], output_path)
